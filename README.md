@@ -7,10 +7,10 @@
 
 | 文件 | 修改内容 |
 |------|----------|
-| `agent_ppo/conf/conf.py` | 动作空间8→16；熵系数0.001→0.01；特征维度40→1863；新增环境参数和奖励参数 |
-| `agent_ppo/feature/preprocessor.py` | 新增OrganManager和MapManager类；特征提取从40维扩展到1863维；动作掩码扩展到16维；奖励函数完全重写 |
-| `agent_ppo/feature/definition.py` | legal_action维度8→16；prob维度8→16 |
-| `agent_ppo/model/model.py` | 单MLP改为CNN+MLP；新增CNN地图编码器 |
+| `agent_ppo/conf/conf.py` | 1. 动作空间：8 → 16<br>2. 熵系数：0.001 → 0.01<br>3. 特征维度：40 → 1863<br>4. 新增环境参数：MAX_STEPS=1000，TREASURE_NUM=10，MONSTER2_SPAWN_STEP=300，MONSTER_SPEED_UP_STEP=500<br>5. 新增奖励参数：REW_STEP=1.5，REW_TREASURE=100，REW_SURVIVE=0.05，REW_MONSTER_DISTANCE=0.3，PENALTY_HIT_WALL=0.1 |
+| `agent_ppo/feature/preprocessor.py` | 1. 新增OrganManager类：管理宝箱和buff的位置估计（视野外物体追踪）<br>2. 新增MapManager类：管理21×21局部地图（障碍物、记忆、宝箱、buff）<br>3. 特征提取：从40维扩展到1863维（英雄5+怪物10+地图1764+宝箱60+buff6+动作掩码16+进度2）<br>4. 动作掩码：扩展到16维，支持闪现冷却和撞墙检测<br>5. 奖励函数：完全重写 |
+| `agent_ppo/feature/definition.py` | 1. legal_action维度：8 → 16<br>2. prob维度：8 → 16 |
+| `agent_ppo/model/model.py` | 1. 网络结构：单MLP → CNN+MLP<br>2. 新增CNN地图编码器：处理4×21×21地图 → 512维<br>3. 新增MLP其他特征编码器：处理99维 → 128维 |
 | 其他文件 | algorithm.py、train_workflow.py、agent.py 未修改 |
 
 ## 二、奖励惩罚机制
