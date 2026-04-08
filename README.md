@@ -1,8 +1,6 @@
 # MOBA_AwakeningAgent
 2026年腾讯开悟_智能体决策算法
 
-Here's the English version of the Gorge Chase PPO 2026 Competition Update documentation:
-
 ---
 
 # Gorge Chase PPO - 2026 Competition Version
