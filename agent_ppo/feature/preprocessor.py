@@ -151,6 +151,28 @@ class MapManager:
                 feature[3, i, j] = self.buffs[u, v]
 
         return feature
+    
+    def get_local_memory_avg(self):
+        """获取周围21×21区域的平均记忆值（用于探索奖励）"""
+        if self.hero_pos is None:
+            return 1.0
+        
+        size = 21
+        half = size // 2
+        total = 0.0
+        count = 0
+        
+        for i in range(size):
+            for j in range(size):
+                u = self.hero_pos[0] + i - half
+                v = self.hero_pos[1] + j - half
+                if 0 <= u < 128 and 0 <= v < 128:
+                    total += self.memory[u, v]
+                    count += 1
+        
+        if count == 0:
+            return 1.0
+        return total / count / 10
 
 
 class Preprocessor:
@@ -166,7 +188,10 @@ class Preprocessor:
         self.hit_actions = set()
         self.last_hero_pos = None
         self.last_treasure_count = 0
-        self._last_buff_count = 0  # 新增：记录上一帧的buff数量
+        self._last_buff_count = 0
+        self._last_min_dist = 1000
+        self.same_action_count = 0
+        self.last_move_action = -1
 
         self.map_manager = MapManager()
         self.buff = OrganManager('buff')
@@ -271,6 +296,7 @@ class Preprocessor:
     def _get_action_mask(self, hero_info, hero_pos):
         mask = [1] * Config.ACTION_NUM
 
+        # 撞墙检测
         if self.last_hero_pos is not None and self.last_action != -1:
             dx = self.last_hero_pos[0] - hero_pos[0]
             dz = self.last_hero_pos[1] - hero_pos[1]
@@ -288,6 +314,7 @@ class Preprocessor:
             for i in range(8):
                 mask[i] = 1
 
+        # 闪现冷却mask
         talent = hero_info.get('talent', {})
         if talent.get('status', 0) == 0:
             for i in range(8):
@@ -297,13 +324,12 @@ class Preprocessor:
         return mask
 
     def _get_reward(self, hero_pos, frame_state):
-        """计算奖励 - 增加宝箱靠近引导、技能使用鼓励"""
-        r = Config.REW_STEP + Config.REW_SURVIVE  # 步数奖励 + 存活奖励
+        """计算奖励 - 逃命优先，安全时探索"""
+        r = Config.REW_STEP + Config.REW_SURVIVE
         
-        # ========== 1. 远离怪物的引导奖励 ==========
+        # ========== 1. 怪物距离计算 ==========
         monsters = frame_state.get('monsters', [])
         min_dist = 1000
-        
         for m in monsters:
             m_pos = m.get('pos', {})
             dx = m_pos.get('x', 0) - hero_pos[0]
@@ -312,47 +338,103 @@ class Preprocessor:
             if dist < min_dist:
                 min_dist = dist
         
-        if min_dist < 1000:
-            if min_dist < 5:
-                dist_reward = -Config.REW_MONSTER_DISTANCE * (5 - min_dist)
-            else:
-                dist_reward = Config.REW_MONSTER_DISTANCE * min(min_dist / 50, 1.0)
-            r += dist_reward
+        # ========== 2. 逃命优先（怪物近时）==========
+        if min_dist < 10:
+            # 危险！逃命第一
+            r += Config.REW_MONSTER_DISTANCE * 2 * (1 - min_dist / 50)
+            
+            # 危险时用闪现给超高奖励
+            if self.last_action >= 8:
+                r += 2.0
+            
+            # 检查闪现后是否远离了怪物
+            if hasattr(self, '_last_min_dist') and self.last_action >= 8:
+                if min_dist > self._last_min_dist + 5:
+                    r += 0.5
+            
+        # ========== 3. 安全时探索（怪物远时）==========
+        elif min_dist > 30:
+            # 安全！主动探索
+            r += Config.REW_MONSTER_DISTANCE * 0.3 * min(min_dist / 50, 1.0)
+            
+            # 探索新区域奖励
+            local_memory_avg = self.map_manager.get_local_memory_avg()
+            if local_memory_avg < 0.1:
+                r += 0.4
+            elif local_memory_avg > 0.5:
+                r -= 0.1
+            
+            # 宝箱导向奖励
+            nearest_treasure_dist = 1000
+            for treasure in self.treasures:
+                if treasure.available and treasure.pos[0] != -1:
+                    dist = treasure.real_distance
+                    if dist < nearest_treasure_dist:
+                        nearest_treasure_dist = dist
+            
+            if nearest_treasure_dist < 1000 and nearest_treasure_dist < 100:
+                r += 0.05 * (1 - nearest_treasure_dist / 100)
+            
+            # 闪现奖励
+            if self.last_action >= 8:
+                r += 0.2
+            
+        # ========== 4. 中等距离（边逃边探索）==========
+        else:
+            r += Config.REW_MONSTER_DISTANCE * 0.8 * min(min_dist / 50, 1.0)
+            
+            # 轻微探索奖励
+            local_memory_avg = self.map_manager.get_local_memory_avg()
+            if local_memory_avg < 0.1:
+                r += 0.15
+            
+            # 轻微宝箱导向（宝箱比怪物近时才考虑）
+            nearest_treasure_dist = 1000
+            for treasure in self.treasures:
+                if treasure.available and treasure.pos[0] != -1:
+                    dist = treasure.real_distance
+                    if dist < nearest_treasure_dist:
+                        nearest_treasure_dist = dist
+            
+            if nearest_treasure_dist < 1000 and nearest_treasure_dist < min_dist:
+                r += 0.03 * (1 - nearest_treasure_dist / 100)
+            
+            # 闪现奖励
+            if self.last_action >= 8:
+                r += 0.5
         
-        # ========== 2. 宝箱靠近引导奖励 ==========
-        nearest_treasure_dist = 1000
-        for treasure in self.treasures:
-            if treasure.available and treasure.pos[0] != -1:
-                dist = treasure.real_distance
-                if dist < nearest_treasure_dist:
-                    nearest_treasure_dist = dist
+        # 记录上一帧的怪物距离
+        self._last_min_dist = min_dist
         
-        if nearest_treasure_dist < 1000:
-            # 距离宝箱越近，奖励越高
-            if nearest_treasure_dist < 50:
-                treasure_approach_reward = 0.02 * (1 - nearest_treasure_dist / 50)
-                r += treasure_approach_reward
-        
-        # ========== 3. 宝箱拾取奖励 ==========
+        # ========== 5. 宝箱拾取奖励 ==========
         score_info = frame_state.get('score_info', {})
         curr_count = score_info.get('treasure_collected_count', 0) if score_info else 0
         treasure_get = curr_count - self.last_treasure_count
         if treasure_get > 0:
             r += Config.REW_TREASURE * treasure_get
-            r += Config.REW_SURVIVE * 10  # 额外奖励
+            r += Config.REW_SURVIVE * 10
         self.last_treasure_count = curr_count
         
-        # ========== 4. 技能使用鼓励 ==========
-        if self.last_action >= 8:  # 闪现动作（8-15）
-            r += 0.2  # 每次使用闪现给小奖励
-        
-        # ========== 5. 增益拾取奖励 ==========
+        # ========== 6. 增益拾取奖励 ==========
         buff_count = score_info.get('buff_count', 0) if score_info else 0
-        if buff_count > self._last_buff_count:
-            r += Config.REW_SURVIVE * 20  # 捡到buff给额外奖励
+        if hasattr(self, '_last_buff_count'):
+            if buff_count > self._last_buff_count:
+                r += Config.REW_SURVIVE * 20
         self._last_buff_count = buff_count
         
-        # ========== 6. 撞墙惩罚 ==========
+        # ========== 7. 连续相同动作惩罚（减少原地抽搐）==========
+        current_move_action = self.last_action % 8 if self.last_action != -1 else -1
+        if current_move_action != -1:
+            if current_move_action == self.last_move_action:
+                self.same_action_count += 1
+            else:
+                self.same_action_count = 0
+            
+            if self.same_action_count >= 3:
+                r -= 0.05 * (self.same_action_count - 2)
+        self.last_move_action = current_move_action
+        
+        # ========== 8. 撞墙惩罚 ==========
         if self.last_action != -1 and self.last_action < 8:
             if self.last_hero_pos is not None:
                 dx = self.last_hero_pos[0] - hero_pos[0]
