@@ -55,3 +55,15 @@
 - Conv2 (kernel=5, stride=2): 21→11
 - Conv3 (kernel=3, stride=1): 11→11 (with padding=1)
 | 5 | `model.py` | 第56行 | `64 * 6 * 6` | `64 * 11 * 11` |
+
+## IV. Recent Experimental Improvements (In Progress)
+
+| Issue | Fix |
+|-------|-----|
+| Circling | Penalty for revisiting old paths |
+| Excessive wall collisions | Wall penalty: 0.1 → 0.5 |
+| Immobile when monster far | Safe-zone exploration reward |
+| Cannot pick treasure | Guidance reward toward treasure |
+| Never uses blink | High reward for blink when in danger |
+| Stuttering in place | Penalty for consecutive identical actions |
+| Low exploration | Entropy coefficient: 0.001 → 0.1 |
