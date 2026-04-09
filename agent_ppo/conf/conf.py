@@ -18,7 +18,7 @@ class Config:
     GAMMA = 0.99
     LAMDA = 0.95
     INIT_LEARNING_RATE_START = 0.0003
-    BETA_START = 0.01  # 从 0.001 改为 0.01，增加探索
+    BETA_START = 0.1  # 从 0.001 改为 0.01-0.1，增加探索
     CLIP_PARAM = 0.2
     VF_COEF = 1.0
     GRAD_CLIP_RANGE = 0.5
@@ -38,7 +38,7 @@ class Config:
     REW_FLASH = 0.1                   # 闪现奖励系数
     REW_SURVIVE = 0.05                # 新增：存活奖励（每步额外）
     REW_MONSTER_DISTANCE = 0.3        # 新增：远离怪物奖励系数
-    PENALTY_HIT_WALL = 0.1            # 撞墙惩罚
+    PENALTY_HIT_WALL = 0.5      #from 0.1 to 0.5      # 撞墙惩罚
 
     # ==================== 特征维度 ====================
     # 英雄特征：位置(2) + 闪现可用(1) + 闪现cd(1) + buff状态(1) = 5
