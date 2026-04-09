@@ -21,6 +21,7 @@ import os
 import time
 
 import torch
+import numpy as np
 from agent_ppo.conf.conf import Config
 
 
@@ -41,6 +42,12 @@ class Algorithm:
 
         self.last_report_monitor_time = 0
         self.train_step = 0
+        
+        # 存储额外指标
+        self.last_clip_frac = 0.0
+        self.last_explained_var = 0.0
+        self.last_adv_mean = 0.0
+        self.last_ret_mean = 0.0
 
     def learn(self, list_sample_data):
         """Training entry: PPO update on a batch of SampleData.
@@ -61,7 +68,7 @@ class Algorithm:
 
         logits, value_pred = self.model(obs)
 
-        total_loss, info_list = self._compute_loss(
+        total_loss, info_list, extra_metrics = self._compute_loss(
             logits=logits,
             value_pred=value_pred,
             legal_action=legal_action,
@@ -77,6 +84,12 @@ class Algorithm:
         torch.nn.utils.clip_grad_norm_(self.parameters, Config.GRAD_CLIP_RANGE)
         self.optimizer.step()
         self.train_step += 1
+        
+        # 存储额外指标供外部获取
+        self.last_clip_frac = extra_metrics['clip_frac']
+        self.last_explained_var = extra_metrics['explained_var']
+        self.last_adv_mean = extra_metrics['adv_mean']
+        self.last_ret_mean = extra_metrics['ret_mean']
 
         now = time.time()
         if now - self.last_report_monitor_time >= 60:
@@ -86,12 +99,18 @@ class Algorithm:
                 "policy_loss": round(info_list[1].item(), 4),
                 "entropy_loss": round(info_list[2].item(), 4),
                 "reward": round(reward.mean().item(), 4),
+                "clip_frac": round(self.last_clip_frac, 4),
+                "explained_var": round(self.last_explained_var, 4),
+                "adv_mean": round(self.last_adv_mean, 4),
+                "ret_mean": round(self.last_ret_mean, 4),
             }
             self.logger.info(
                 f"[train] total_loss:{results['total_loss']} "
                 f"policy_loss:{results['policy_loss']} "
                 f"value_loss:{results['value_loss']} "
-                f"entropy:{results['entropy_loss']}"
+                f"entropy:{results['entropy_loss']} "
+                f"clip_frac:{results['clip_frac']} "
+                f"explained_var:{results['explained_var']}"
             )
             if self.monitor:
                 self.monitor.put_data({os.getpid(): results})
@@ -145,7 +164,32 @@ class Algorithm:
         # Total loss / 总损失
         total_loss = self.vf_coef * value_loss + policy_loss - self.var_beta * entropy_loss
 
-        return total_loss, [value_loss, policy_loss, entropy_loss]
+        # ========== 计算额外指标 ==========
+        with torch.no_grad():
+            # 1. ClipFrac：被 clip 的比例
+            clip_low = 1 - self.clip_param
+            clip_high = 1 + self.clip_param
+            is_clipped = (ratio < clip_low) | (ratio > clip_high)
+            clip_frac = is_clipped.float().mean().item()
+            
+            # 2. ExplainedVar：value 对回报的解释程度
+            td_error = reward_sum - old_value
+            var_td = torch.var(td_error).item()
+            var_return = torch.var(reward_sum).item()
+            explained_var = 1 - var_td / (var_return + 1e-8)
+            
+            # 3. AdvMean / RetMean
+            adv_mean = advantage.mean().item()
+            ret_mean = reward_sum.mean().item()
+        
+        extra_metrics = {
+            'clip_frac': clip_frac,
+            'explained_var': explained_var,
+            'adv_mean': adv_mean,
+            'ret_mean': ret_mean,
+        }
+
+        return total_loss, [value_loss, policy_loss, entropy_loss], extra_metrics
 
     def _masked_softmax(self, logits, legal_action):
         """Softmax with legal action masking (suppress illegal actions).
@@ -157,3 +201,12 @@ class Algorithm:
         label = label * legal_action
         label = label + 1e5 * (legal_action - 1)
         return torch.nn.functional.softmax(label, dim=1)
+    
+    def get_metrics(self):
+        """获取最近一次训练的额外指标"""
+        return {
+            'clip_frac': self.last_clip_frac,
+            'explained_var': self.last_explained_var,
+            'adv_mean': self.last_adv_mean,
+            'ret_mean': self.last_ret_mean,
+        }
