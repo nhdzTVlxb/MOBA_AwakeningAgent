@@ -56,12 +56,18 @@ class Agent(BaseAgent):
 
         将原始观测转换为 ObsData 和 remain_info。
         """
-        feature, legal_action, reward = self.preprocessor.feature_process(env_obs, self.last_action)
+        # feature_process 现在返回5个值
+        feature, legal_action, reward, shaped_reward, visible_treasure_ratio = self.preprocessor.feature_process(env_obs, self.last_action)
+        
         obs_data = ObsData(
             feature=list(feature),
             legal_action=legal_action,
         )
-        remain_info = {"reward": reward}
+        remain_info = {
+            "reward": reward,
+            "shaped_reward": shaped_reward,
+            "visible_treasure_ratio": visible_treasure_ratio,
+        }
         return obs_data, remain_info
 
     def predict(self, list_obs_data):
