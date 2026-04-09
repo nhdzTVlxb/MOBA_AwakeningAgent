@@ -88,4 +88,3 @@
 3. **Curriculum Learning**: 4 difficulty stages with dynamically adjusted environment parameters
 4. **Validation Mechanism**: Separate training/validation maps, evaluation every 10 episodes
 5. **Monitoring Enhancement**: Pre/post speedup split statistics, 20+ metrics reporting
-| Low exploration | Entropy coefficient: 0.001 → 0.1 |
