@@ -44,20 +44,23 @@ class Agent(BaseAgent):
         super().__init__(agent_type, device, logger, monitor)
 
     def reset(self, env_obs=None):
-        """Reset per-episode state.
-
-        每局开始时重置状态。
-        """
+        """Reset per-episode state."""
         self.preprocessor.reset()
         self.last_action = -1
 
     def observation_process(self, env_obs):
-        """Convert raw env_obs to ObsData and remain_info.
-
-        将原始观测转换为 ObsData 和 remain_info。
         """
-        # feature_process 现在返回5个值
-        feature, legal_action, reward, shaped_reward, visible_treasure_ratio = self.preprocessor.feature_process(env_obs, self.last_action)
+        Convert raw env_obs to ObsData and remain_info.
+        
+        feature_process 返回6个值：
+        - feature: 特征向量
+        - legal_action: 合法动作掩码
+        - reward: 奖励列表
+        - shaped_reward: shaping奖励
+        - visible_treasure_ratio: 可见宝箱比例
+        - distance_reward: 距离探索奖励
+        """
+        feature, legal_action, reward, shaped_reward, visible_treasure_ratio, distance_reward = self.preprocessor.feature_process(env_obs, self.last_action)
         
         obs_data = ObsData(
             feature=list(feature),
@@ -67,14 +70,12 @@ class Agent(BaseAgent):
             "reward": reward,
             "shaped_reward": shaped_reward,
             "visible_treasure_ratio": visible_treasure_ratio,
+            "distance_reward": distance_reward,
         }
         return obs_data, remain_info
 
     def predict(self, list_obs_data):
-        """Stochastic inference for training (exploration).
-
-        训练时随机采样动作（探索）。
-        """
+        """Stochastic inference for training (exploration)."""
         feature = list_obs_data[0].feature
         legal_action = list_obs_data[0].legal_action
 
@@ -93,54 +94,42 @@ class Agent(BaseAgent):
         ]
 
     def exploit(self, env_obs):
-        """Greedy inference for evaluation.
-
-        评估时贪心选择动作（利用）。
-        """
+        """Greedy inference for evaluation."""
         obs_data, _ = self.observation_process(env_obs)
         act_data = self.predict([obs_data])
         return self.action_process(act_data[0], is_stochastic=False)
 
     def learn(self, list_sample_data):
-        """Train the model.
-
-        训练模型。
-        """
+        """Train the model."""
         return self.algorithm.learn(list_sample_data)
 
     def save_model(self, path=None, id="1"):
-        """Save model checkpoint.
-
-        保存模型检查点。
-        """
+        """Save model checkpoint."""
         model_file_path = f"{path}/model.ckpt-{str(id)}.pkl"
         state_dict_cpu = {k: v.clone().cpu() for k, v in self.model.state_dict().items()}
         torch.save(state_dict_cpu, model_file_path)
         self.logger.info(f"save model {model_file_path} successfully")
 
     def load_model(self, path=None, id="1"):
-        """Load model checkpoint.
-
-        加载模型检查点。
-        """
+        """Load model checkpoint."""
         model_file_path = f"{path}/model.ckpt-{str(id)}.pkl"
         self.model.load_state_dict(torch.load(model_file_path, map_location=self.device))
         self.logger.info(f"load model {model_file_path} successfully")
 
     def action_process(self, act_data, is_stochastic=True):
-        """Unpack ActData to int action and update last_action.
-
-        解包 ActData 为 int 动作并记录 last_action。
+        """
+        Unpack ActData to int action and update last_action.
+        
+        不做任何硬平滑修改，只记录模型输出的原始动作。
+        Z型走/抽搐通过 preprocessor.py 中的 _calc_zigzag_penalty 惩罚引导。
         """
         action = act_data.action if is_stochastic else act_data.d_action
-        self.last_action = int(action[0])
-        return int(action[0])
+        action_int = int(action[0])
+        self.last_action = action_int
+        return action_int
 
     def _run_model(self, feature, legal_action):
-        """Run model inference, return logits, value, prob.
-
-        执行模型推理，返回 logits、value 和动作概率。
-        """
+        """Run model inference, return logits, value, prob."""
         self.model.set_eval_mode()
         obs_tensor = torch.tensor(np.array([feature]), dtype=torch.float32).to(self.device)
 
@@ -150,17 +139,13 @@ class Agent(BaseAgent):
         logits_np = logits.cpu().numpy()[0]
         value_np = value.cpu().numpy()[0]
 
-        # Legal action masked softmax / 合法动作掩码 softmax
         legal_action_np = np.array(legal_action, dtype=np.float32)
         prob = self._legal_soft_max(logits_np, legal_action_np)
 
         return logits_np, value_np, prob
 
     def _legal_soft_max(self, input_hidden, legal_action):
-        """Softmax with legal action masking (numpy).
-
-        合法动作掩码下的 softmax（numpy 版）。
-        """
+        """Softmax with legal action masking (numpy)."""
         _w, _e = 1e20, 1e-5
         tmp = input_hidden - _w * (1.0 - legal_action)
         tmp_max = np.max(tmp, keepdims=True)
@@ -169,10 +154,7 @@ class Agent(BaseAgent):
         return tmp / (np.sum(tmp, keepdims=True) * 1.00001)
 
     def _legal_sample(self, probs, use_max=False):
-        """Sample action from probability distribution.
-
-        按概率分布采样动作。
-        """
+        """Sample action from probability distribution."""
         if use_max:
             return int(np.argmax(probs))
         return int(np.argmax(np.random.multinomial(1, probs, size=1)))
