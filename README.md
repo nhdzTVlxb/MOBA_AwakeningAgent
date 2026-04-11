@@ -3,7 +3,7 @@
 
 ## Changelog
 
-### 2026-04-12 Major Update
+### 2026-04-12 PPO2.0 Update（PPO 2.0 is running.）
 
 #### New Features
 - **Monster Memory Features**: Added 5-dimensional memory features per monster (visibility, memory direction, memory distance, confidence), maintaining danger awareness even when monsters leave line of sight.
