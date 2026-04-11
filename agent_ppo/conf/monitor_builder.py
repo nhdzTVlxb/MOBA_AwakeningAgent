@@ -134,6 +134,26 @@ def build_monitor():
         )
         .end_panel()
         .add_panel(
+            name="奖励构成 Components",
+            name_en="reward_components",
+            type="line",
+        )
+        .add_metric(metrics_name="reward_comp_danger_penalty", expr="avg(reward_comp_danger_penalty{})")
+        .add_metric(metrics_name="reward_comp_monster_distance", expr="avg(reward_comp_monster_distance{})")
+        .add_metric(metrics_name="reward_comp_second_monster_penalty", expr="avg(reward_comp_second_monster_penalty{})")
+        .add_metric(metrics_name="reward_comp_pinch_penalty", expr="avg(reward_comp_pinch_penalty{})")
+        .add_metric(metrics_name="reward_comp_corridor_reward", expr="avg(reward_comp_corridor_reward{})")
+        .add_metric(metrics_name="reward_comp_dead_end_penalty", expr="avg(reward_comp_dead_end_penalty{})")
+        .add_metric(metrics_name="reward_comp_flash_reward", expr="avg(reward_comp_flash_reward{})")
+        .add_metric(metrics_name="reward_comp_pre_speedup_bonus", expr="avg(reward_comp_pre_speedup_bonus{})")
+        .add_metric(metrics_name="reward_comp_repeat_explore_penalty", expr="avg(reward_comp_repeat_explore_penalty{})")
+        .add_metric(metrics_name="reward_comp_treasure_approach", expr="avg(reward_comp_treasure_approach{})")
+        .add_metric(metrics_name="reward_comp_treasure_pickup", expr="avg(reward_comp_treasure_pickup{})")
+        .add_metric(metrics_name="reward_comp_buff_pickup", expr="avg(reward_comp_buff_pickup{})")
+        .add_metric(metrics_name="reward_comp_repeated_action_penalty", expr="avg(reward_comp_repeated_action_penalty{})")
+        .add_metric(metrics_name="reward_comp_wall_hit_penalty", expr="avg(reward_comp_wall_hit_penalty{})")
+        .end_panel()
+        .add_panel(
             name="总分",
             name_en="total_score",
             type="line",

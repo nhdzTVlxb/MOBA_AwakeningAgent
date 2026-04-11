@@ -1,0 +1,6 @@
+code/
+.env
+__pycache__/
+train/
+dev/
+license.dat

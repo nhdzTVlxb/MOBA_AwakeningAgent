@@ -79,6 +79,10 @@ class EpisodeRunner:
         self.total_completed = 0
         self.total_abnormal = 0
 
+        # 用于60秒监控平均的累加器
+        self.monitor_accumulator = {}
+        self.monitor_episodes_count = 0
+
     def run_episodes(self):
         """Run a single episode and yield collected samples."""
         while True:
@@ -129,6 +133,22 @@ class EpisodeRunner:
             step = 0
             total_reward = 0.0
             total_shaped_reward = 0.0
+            episode_reward_components = {
+                'danger_penalty': 0.0,
+                'monster_distance': 0.0,
+                'second_monster_penalty': 0.0,
+                'pinch_penalty': 0.0,
+                'corridor_reward': 0.0,
+                'dead_end_penalty': 0.0,
+                'flash_reward': 0.0,
+                'pre_speedup_bonus': 0.0,
+                'repeat_explore_penalty': 0.0,
+                'treasure_approach': 0.0,
+                'treasure_pickup': 0.0,
+                'buff_pickup': 0.0,
+                'repeated_action_penalty': 0.0,
+                'wall_hit_penalty': 0.0,
+            }
 
             self.logger.info(f"Episode {self.episode_cnt} start on map {map_id}")
 
@@ -158,6 +178,10 @@ class EpisodeRunner:
                 shaped_reward = _remain_info.get("shaped_reward", 0.0)
                 total_reward += reward
                 total_shaped_reward += shaped_reward
+                
+                # Accumulate detailed reward components
+                for k in episode_reward_components:
+                    episode_reward_components[k] += _remain_info.get(k, 0.0)
                 
                 # 获取得分信息
                 observation = env_obs.get("observation", {})
@@ -244,10 +268,9 @@ class EpisodeRunner:
                     )
                     
                     # 上报监控
-                    now = time.time()
-                    if now - self.last_report_monitor_time >= 60 and self.monitor:
+                    if self.monitor:
                         monitor_data = {
-                            "reward": round(total_reward, 4),
+                            "reward": total_reward,
                             "total_score": summary['total_score'],
                             "treasures": summary['treasures'],
                             "steps": summary['steps'],
@@ -260,20 +283,34 @@ class EpisodeRunner:
                             "pre_terminal": summary['pre_terminal'],
                             "post_terminal": summary['post_terminal'],
                             "flash_count": summary['flash_count'],
-                            "last_flash_used": 1 if summary['last_flash_used'] else 0,
-                            "last_flash_ready": 1 if summary['last_flash_ready'] else 0,
-                            "last_flash_legal": 1 if summary['last_flash_legal'] else 0,
+                            "last_flash_used": 1.0 if summary['last_flash_used'] else 0.0,
+                            "last_flash_ready": 1.0 if summary['last_flash_ready'] else 0.0,
+                            "last_flash_legal": 1.0 if summary['last_flash_legal'] else 0.0,
                             "final_danger": summary['final_danger'],
                             "final_treasure_dist": summary['final_treasure_dist'],
                             "final_visible_treasure": summary['final_visible_treasure'],
-                            "speedup_reached": 1 if summary['speedup_reached'] else 0,
-                            "terminated": 1 if summary['terminated'] else 0,
-                            "completed": 1 if summary['completed'] else 0,
+                            "speedup_reached": 1.0 if summary['speedup_reached'] else 0.0,
+                            "terminated": 1.0 if summary['terminated'] else 0.0,
+                            "completed": 1.0 if summary['completed'] else 0.0,
                             "terminated_rate": terminated_rate,
                             "completed_rate": completed_rate,
                         }
-                        self.monitor.put_data({os.getpid(): monitor_data})
-                        self.last_report_monitor_time = now
+                        # Add detailed reward components
+                        for k, v in episode_reward_components.items():
+                            monitor_data[f"reward_comp_{k}"] = v
+                        
+                        # Accumulate
+                        for k, v in monitor_data.items():
+                            self.monitor_accumulator[k] = self.monitor_accumulator.get(k, 0.0) + v
+                        self.monitor_episodes_count += 1
+
+                        now = time.time()
+                        if now - self.last_report_monitor_time >= 60:
+                            avg_monitor_data = {k: round(v / self.monitor_episodes_count, 4) for k, v in self.monitor_accumulator.items()}
+                            self.monitor.put_data({os.getpid(): avg_monitor_data})
+                            self.last_report_monitor_time = now
+                            self.monitor_accumulator.clear()
+                            self.monitor_episodes_count = 0
 
                 # Build sample frame
                 frame = SampleData(
