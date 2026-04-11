@@ -187,10 +187,15 @@ class Preprocessor:
         self.last_min_monster_dist_norm = 0.5
         self.talent_max_cd = 0
         self.hit_actions = set()
-        self.last_hero_pos = None
+        
+        # 拆分为两个历史位置变量
+        self.last_hero_pos_for_mask = None   # 专门给 action mask 用
+        self.last_hero_pos_for_reward = None # 专门给 reward 位移判断用
+        
+        # 宝箱和buff计数（用于增量奖励）
         self.last_treasure_count = 0
-        self._last_buff_count = 0
-        self._last_min_dist = 1000
+        self.last_buff_count = 0
+        self.last_min_dist = None              # 改为None，首帧不计算delta
         self.same_action_count = 0
         self.last_move_action = -1
 
@@ -198,9 +203,23 @@ class Preprocessor:
         self.buff = OrganManager('buff')
         self.treasures = [OrganManager('treasure', i + 1) for i in range(Config.TREASURE_NUM)]
         
-        # 奖励函数增强所需的状态变量
-        self._last_monsters_pos = []
+        # 历史怪物位置（真正存储上一帧）
+        self.last_monsters_pos = []
+        self.current_monsters_pos = []
+        
         self._visit_map = np.zeros((128, 128), np.float32)
+        
+        # 距离探索奖励相关
+        self.start_pos = None
+        self.last_distance_from_start = 0.0
+        
+        # Z型惩罚相关
+        self._action_sequence = []
+
+    def set_start_pos(self, hero_pos):
+        """设置起始位置（对局开始时调用）"""
+        self.start_pos = hero_pos.copy()
+        self.last_distance_from_start = 0.0
 
     def feature_process(self, env_obs, last_action):
         self.last_action = last_action
@@ -213,6 +232,11 @@ class Preprocessor:
         self.max_step = env_info.get("max_step", Config.MAX_STEPS)
 
         hero_info, hero_pos = get_hero_info_and_pos(frame_state)
+
+        # 自动初始化 start_pos
+        if self.start_pos is None:
+            self.start_pos = hero_pos.copy()
+            self.last_distance_from_start = 0.0
 
         talent = hero_info.get('talent', {})
         self.talent_max_cd = max(self.talent_max_cd, talent.get('cooldown', 0))
@@ -230,17 +254,40 @@ class Preprocessor:
         self.map_manager.update_hero(hero_pos)
         self.map_manager.update_obstacles(hero_pos, map_info)
 
-        # 1. 英雄特征 (5维)
+        # 先保存当前怪物位置到临时变量
+        monsters = frame_state.get('monsters', [])
+        self.current_monsters_pos = []
+        for m in monsters:
+            m_pos = m.get('pos', {})
+            self.current_monsters_pos.append([m_pos.get('x', 0), m_pos.get('z', 0)])
+
+        # ========== 获取 score_info 用于宝箱/buff增量奖励 ==========
+        score_info = frame_state.get('score_info', {})
+        current_treasure_count = score_info.get('treasure_collected_count', 0) if score_info else 0
+        current_buff_count = score_info.get('buff_count', 0) if score_info else 0
+        
+        # 计算增量
+        treasure_get = current_treasure_count - self.last_treasure_count
+        buff_get = current_buff_count - self.last_buff_count
+
+        # 计算距离起始位置的欧几里得距离
+        distance_from_start = 0.0
+        if self.start_pos is not None:
+            dx = hero_pos[0] - self.start_pos[0]
+            dz = hero_pos[1] - self.start_pos[1]
+            distance_from_start = math.sqrt(dx*dx + dz*dz)
+
+        # 1. 英雄特征 (6维)
         hero_feat = np.array([
             norm(hero_pos[0], -128, 128),
             norm(hero_pos[1], -128, 128),
             float(talent.get('status', 0) == 1),
             norm(talent.get('cooldown', 0), 0, max(self.talent_max_cd, 1)),
-            float(hero_info.get('buff_remain_time', 0) > 0)
+            float(hero_info.get('buff_remain_time', 0) > 0),
+            norm(distance_from_start, 0, Config.DISTANCE_FEATURE_NORM),
         ], dtype=np.float32)
 
         # 2. 怪物特征 (10维)
-        monsters = frame_state.get('monsters', [])
         monster_feats = []
         for i in range(2):
             if i < len(monsters):
@@ -262,12 +309,6 @@ class Preprocessor:
                 ])
             else:
                 monster_feats.extend([0.0, 0.0, 0.0, 1.0, 0.0])
-
-        # 保存怪物位置供奖励函数使用
-        self._last_monsters_pos = []
-        for m in monsters:
-            m_pos = m.get('pos', {})
-            self._last_monsters_pos.append([m_pos.get('x', 0), m_pos.get('z', 0)])
 
         # 3. 地图特征 (1764维)
         map_feat = self.map_manager.get_around_feature().reshape(-1)
@@ -300,21 +341,33 @@ class Preprocessor:
             progress_feat
         ])
 
-        # 计算奖励（返回 total_reward 和 shaped_reward）
-        total_reward, shaped_reward = self._get_reward(hero_pos, frame_state)
+        # ========== 计算奖励 ==========
+        total_reward, shaped_reward, distance_reward = self._get_reward(
+            hero_pos, monsters, treasure_get, buff_get
+        )
 
-        # 计算视野内可见宝箱比例（用于监控）
+        # 更新历史计数
+        self.last_treasure_count = current_treasure_count
+        self.last_buff_count = current_buff_count
+
+        # 计算视野内可见宝箱比例
         visible_treasure_ratio = self._get_visible_treasure_ratio(hero_pos)
 
-        return feature, legal_action, [total_reward], shaped_reward, visible_treasure_ratio
+        # 更新 reward 专用的历史位置
+        self.last_hero_pos_for_reward = hero_pos.copy()
+        
+        # 奖励计算完成后，更新历史怪物位置
+        self.last_monsters_pos = self.current_monsters_pos.copy()
+
+        return feature, legal_action, [total_reward], shaped_reward, visible_treasure_ratio, distance_reward
 
     def _get_action_mask(self, hero_info, hero_pos):
         mask = [1] * Config.ACTION_NUM
 
-        # 撞墙检测
-        if self.last_hero_pos is not None and self.last_action != -1:
-            dx = self.last_hero_pos[0] - hero_pos[0]
-            dz = self.last_hero_pos[1] - hero_pos[1]
+        # 撞墙检测 - 使用 mask 专用的历史位置
+        if self.last_hero_pos_for_mask is not None and self.last_action != -1:
+            dx = self.last_hero_pos_for_mask[0] - hero_pos[0]
+            dz = self.last_hero_pos_for_mask[1] - hero_pos[1]
             if abs(dx) < 0.1 and abs(dz) < 0.1:
                 self.hit_actions.add(self.last_action % 8)
             else:
@@ -335,7 +388,8 @@ class Preprocessor:
             for i in range(8):
                 mask[i + 8] = 0
 
-        self.last_hero_pos = hero_pos.copy()
+        # 更新 mask 专用的历史位置
+        self.last_hero_pos_for_mask = hero_pos.copy()
         return mask
 
     # ==================== 奖励函数增强方法 ====================
@@ -355,18 +409,9 @@ class Preprocessor:
         return walkable / 8.0
 
     def _calc_corridor_reward_detailed(self, hero_pos):
-        """
-        详细版开阔度奖励（corridor reward）
-        根据周围8个方向的通路长度、平均可走深度以及附近区域是否开阔来计算
-        
-        参考文献描述：
-        - 根据当前位置周围几个方向的通路长度
-        - 平均可走深度
-        - 附近区域是否开阔
-        """
+        """详细版开阔度奖励"""
         x, z = int(round(hero_pos[0])), int(round(hero_pos[1]))
         
-        # 检查8个方向
         directions = [(1,0), (-1,0), (0,1), (0,-1), (1,1), (1,-1), (-1,1), (-1,-1)]
         
         walkable_count = 0
@@ -374,7 +419,6 @@ class Preprocessor:
         depth_list = []
         
         for dx, dz in directions:
-            # 计算该方向的可走深度（最大10步）
             depth = 0
             for step in range(1, 11):
                 nx, nz = x + dx * step, z + dz * step
@@ -394,47 +438,31 @@ class Preprocessor:
         if walkable_count == 0:
             return -Config.PENALTY_DEAD_END
         
-        # 1. 可走方向比例
         direction_ratio = walkable_count / 8.0
-        
-        # 2. 平均深度（归一化到0-1，最大深度10）
         avg_depth = total_depth / walkable_count
         depth_score = min(avg_depth / 10.0, 1.0)
-        
-        # 3. 开阔度：是否有长通道（深度>5的方向数）
         long_path_count = sum(1 for d in depth_list if d > 5)
         openness_score = min(long_path_count / 4.0, 1.0)
         
-        # 综合开阔度
         openness = direction_ratio * 0.3 + depth_score * 0.4 + openness_score * 0.3
         
         if openness > 0.7:
             return Config.REW_CORRIDOR * openness
         elif openness < 0.3:
             return -Config.PENALTY_DEAD_END * (1 - openness)
-        return openness * 0.05  # 中等开阔度给少量奖励
+        return openness * 0.05
 
     def _calc_pinch_penalty_detailed(self, hero_pos, monsters):
-        """
-        详细版包夹惩罚
-        根据两只怪物与英雄的相对位置关系、相对速度、合围趋势来判断
-        
-        参考文献描述：
-        - 根据两只怪物和自己的相对位置关系来判断是否有合围趋势
-        - 活动空间被两只怪一起压缩的程度
-        """
+        """详细版包夹惩罚 - 使用 self.last_monsters_pos 作为历史位置"""
         if len(monsters) < 2:
             return 0.0
         
-        # 获取两只怪物的位置
         m1_pos = [monsters[0].get('pos', {}).get('x', 0), monsters[0].get('pos', {}).get('z', 0)]
         m2_pos = [monsters[1].get('pos', {}).get('x', 0), monsters[1].get('pos', {}).get('z', 0)]
         
-        # 计算向量
         v1 = [m1_pos[0] - hero_pos[0], m1_pos[1] - hero_pos[1]]
         v2 = [m2_pos[0] - hero_pos[0], m2_pos[1] - hero_pos[1]]
         
-        # 1. 夹角（包夹的核心指标）
         dot = v1[0] * v2[0] + v1[1] * v2[1]
         norm1 = max(np.linalg.norm(v1), 1e-6)
         norm2 = max(np.linalg.norm(v2), 1e-6)
@@ -442,27 +470,24 @@ class Preprocessor:
         cos_angle = max(-1.0, min(1.0, cos_angle))
         angle = math.acos(cos_angle) * 180 / math.pi
         
-        # 2. 距离因子（两只怪越近越危险）
         distance_factor = 1.0
         if norm1 < 20 and norm2 < 20:
             distance_factor = 2.0
         elif norm1 < 30 and norm2 < 30:
             distance_factor = 1.5
         
-        # 3. 相对速度（如果有历史数据）
+        # 使用真正的历史怪物位置判断逼近
         speed_factor = 1.0
-        if hasattr(self, '_last_monsters_pos') and len(self._last_monsters_pos) >= 2:
-            # 计算两只怪是否在向英雄靠近
-            last_m1 = self._last_monsters_pos[0] if len(self._last_monsters_pos) > 0 else m1_pos
-            last_m2 = self._last_monsters_pos[1] if len(self._last_monsters_pos) > 1 else m2_pos
+        if len(self.last_monsters_pos) >= 2:
+            last_m1 = self.last_monsters_pos[0] if len(self.last_monsters_pos) > 0 else m1_pos
+            last_m2 = self.last_monsters_pos[1] if len(self.last_monsters_pos) > 1 else m2_pos
             
             dist1_prev = np.linalg.norm([last_m1[0] - hero_pos[0], last_m1[1] - hero_pos[1]])
             dist2_prev = np.linalg.norm([last_m2[0] - hero_pos[0], last_m2[1] - hero_pos[1]])
             
             if norm1 < dist1_prev and norm2 < dist2_prev:
-                speed_factor = 1.5  # 两只都在靠近，更危险
+                speed_factor = 1.5
         
-        # 综合包夹程度
         if angle > 120 and norm1 < 35 and norm2 < 35:
             pinch_severity = (angle / 180.0) * distance_factor * speed_factor
             return -Config.PENALTY_PINCH * pinch_severity * (2 - min(norm1, norm2) / 35)
@@ -470,9 +495,7 @@ class Preprocessor:
         return 0.0
 
     def _calc_second_monster_penalty(self, hero_pos, monsters):
-        """
-        计算第二只怪压力惩罚
-        """
+        """计算第二只怪压力惩罚"""
         if len(monsters) < 2:
             return 0.0
         
@@ -481,7 +504,6 @@ class Preprocessor:
         dz = m2_pos[1] - hero_pos[1]
         dist = math.sqrt(dx*dx + dz*dz)
         
-        # 加速后第二只怪的压力更大
         is_speedup = self.step_no >= Config.MONSTER_SPEED_UP_STEP
         threshold = 25 if is_speedup else 20
         
@@ -490,95 +512,69 @@ class Preprocessor:
         return 0.0
 
     def _calc_pre_speedup_bonus(self):
-        """
-        计算临近加速缓冲奖励
-        在加速前N步提前鼓励拉距离
-        """
+        """计算临近加速缓冲奖励"""
         steps_to_speedup = Config.MONSTER_SPEED_UP_STEP - self.step_no
         if 0 < steps_to_speedup <= 50:
-            # 离加速越近，奖励系数越高
             bonus = Config.REW_PRE_SPEEDUP * (1 - steps_to_speedup / 50)
-            # 如果离怪物近，额外奖励拉距离
-            if hasattr(self, '_last_min_dist'):
-                if self._last_min_dist < 20:
-                    bonus *= 2
+            if self.last_min_dist is not None and self.last_min_dist < 20:
+                bonus *= 2
             return bonus
         return 0.0
 
-    def _calc_flash_reward_detailed(self, hero_pos, monsters, min_dist):
+    def _calc_flash_reward_detailed(self, hero_pos, min_dist, treasure_get):
         """
         详细版闪现奖励/惩罚
-        检查闪现后是否：
-        - 明显拉开了与怪物的距离
-        - 改善了站位（到了更开阔的位置）
-        - 拿到了资源
         
-        参考文献描述：
-        - 如果使用闪现后，和怪物的距离明显拉开，或者自己到了更安全、更开阔的位置，就给奖励
-        - 如果使用闪现后既没有明显脱险，也没有改善站位、拿到资源，就给惩罚
+        Args:
+            hero_pos: 当前位置
+            min_dist: 当前最近怪物距离
+            treasure_get: 这一步是否拿到了宝箱（增量）
         """
         if self.last_action < 8:
             return 0.0
         
         reward = 0.0
         
-        # 1. 检查是否远离了怪物
-        if hasattr(self, '_last_min_dist'):
-            if min_dist > self._last_min_dist + 5:
-                # 成功脱险
+        # 检查是否远离了怪物
+        if self.last_min_dist is not None:
+            if min_dist > self.last_min_dist + 5:
                 reward += Config.REW_FLASH_ESCAPE
-            elif min_dist <= self._last_min_dist:
-                # 闪现无效或更糟
+            elif min_dist <= self.last_min_dist:
                 reward -= Config.PENALTY_FLASH_ABUSE * 0.5
         
-        # 2. 检查是否到了更开阔的位置
-        if hasattr(self, '_last_hero_pos'):
-            # 计算当前位置的开阔度
-            current_openness = self._calc_openness_score(hero_pos)
-            last_openness = self._calc_openness_score(self._last_hero_pos)
-            
+        # 检查是否到了更开阔的位置
+        current_openness = self._calc_openness_score(hero_pos)
+        if self.last_hero_pos_for_reward is not None:
+            last_openness = self._calc_openness_score(self.last_hero_pos_for_reward)
             if current_openness > last_openness + 0.3:
                 reward += Config.REW_FLASH_ESCAPE * 0.5
             elif current_openness < last_openness - 0.3:
                 reward -= Config.PENALTY_FLASH_ABUSE * 0.3
         
-        # 3. 检查是否拿到了宝箱或buff（通过前后帧比较）
-        if hasattr(self, '_last_treasure_count'):
-            if self.last_treasure_count > self._last_treasure_count:
-                reward += Config.REW_TREASURE * 0.2  # 闪现拿宝箱给额外奖励
+        # 修复2: 检查这一步是否拿到了宝箱（使用增量，不是累计值）
+        if treasure_get > 0:
+            reward += Config.REW_TREASURE * 0.05 #old 0.2
         
-        # 4. 检查是否进入了更危险的区域
-        if min_dist < 10 and self.last_action >= 8:
-            # 闪现后反而更危险（距离<10），给惩罚
+        # 闪现后进入危险区
+        if min_dist < 10:
             reward -= Config.PENALTY_FLASH_ABUSE
         
         return reward
 
     def _calc_danger_penalty(self, min_dist):
-        """
-        计算危险惩罚（非线性，加速后阈值更高）
-        """
+        """计算危险惩罚（非线性）"""
         is_speedup = self.step_no >= Config.MONSTER_SPEED_UP_STEP
         threshold = Config.DANGER_THRESHOLD_POST if is_speedup else Config.DANGER_THRESHOLD
         
         if min_dist < threshold:
-            # 非线性惩罚：越近惩罚越重
             penalty = Config.REW_MONSTER_DISTANCE * 2 * (1 - min_dist / threshold)
             return -penalty
         return 0.0
 
     def _calc_dead_end_penalty(self, hero_pos):
-        """
-        详细版死角惩罚
-        根据附近是否开阔、内圈是否容易转身来判断
-        
-        参考文献描述：
-        - 根据当前位置附近是否开阔、内圈是否容易转身来判断
-        - 越像死角或短胡同，惩罚越重
-        """
+        """详细版死角惩罚"""
         x, z = int(round(hero_pos[0])), int(round(hero_pos[1]))
         
-        # 检查4个主要方向的可走深度
         main_directions = [(1,0), (-1,0), (0,1), (0,-1)]
         depths = []
         
@@ -595,33 +591,24 @@ class Preprocessor:
                     break
             depths.append(depth)
         
-        # 判断是否为死角：只有一个方向有较长通路，其他方向都很短
         depths_sorted = sorted(depths, reverse=True)
         
         if depths_sorted[0] > 3 and depths_sorted[1] < 2:
-            # 只有一个方向可走，典型死角
             return -Config.PENALTY_DEAD_END * 1.5
         elif depths_sorted[0] > 2 and depths_sorted[1] < 2:
-            # 接近死角
             return -Config.PENALTY_DEAD_END
         
         return 0.0
 
     def _calc_repeat_explore_penalty(self, hero_pos):
-        """
-        计算重复探索惩罚
-        基于访问历史，如果在同一个区域停留太久就惩罚
-        """
+        """计算重复探索惩罚"""
         x, z = int(round(hero_pos[0])), int(round(hero_pos[1]))
         
-        # 确保坐标在范围内
         x = max(0, min(127, x))
         z = max(0, min(127, z))
         
-        # 更新访问记录
         self._visit_map[x, z] += 1
         
-        # 计算周围9x9区域的访问次数
         total_visits = 0
         count = 0
         for i in range(-4, 5):
@@ -633,15 +620,86 @@ class Preprocessor:
         
         avg_visits = total_visits / max(count, 1)
         
-        # 平均访问次数过高说明在重复绕路
         if avg_visits > 5:
             return -0.05 * (avg_visits - 4)
         return 0.0
 
+    def _calc_distance_explore_reward(self, hero_pos):
+        """欧几里得距离探索奖励"""
+        if self.start_pos is None:
+            return 0.0
+        
+        dx = hero_pos[0] - self.start_pos[0]
+        dz = hero_pos[1] - self.start_pos[1]
+        current_distance = math.sqrt(dx*dx + dz*dz)
+        
+        distance_increase = current_distance - self.last_distance_from_start
+        reward = 0.0
+        
+        if distance_increase > 0:
+            reward = Config.REW_DISTANCE_EXPLORE * min(distance_increase, 10.0)
+            reward = min(reward, Config.MAX_DISTANCE_REWARD)
+        
+        self.last_distance_from_start = current_distance
+        return reward
+
+    def _calc_zigzag_penalty(self):
+        """Z型走/抽搐惩罚 - 检测相反方向往返"""
+        if self.last_action < 0 or self.last_action >= 8:
+            return 0.0
+        
+        self._action_sequence.append(self.last_action)
+        if len(self._action_sequence) > 10:
+            self._action_sequence.pop(0)
+        
+        if len(self._action_sequence) >= 4:
+            # 相反方向映射
+            opposite_map = {
+                0: 4, 4: 0,  # 右左
+                1: 5, 5: 1,  # 下上
+                2: 6, 6: 2,  # 左右
+                3: 7, 7: 3,  # 上下
+            }
+            
+            a = self._action_sequence[-4]
+            b = self._action_sequence[-3]
+            c = self._action_sequence[-2]
+            d = self._action_sequence[-1]
+            
+            # 检测 A-B-A-B 模式且 B 是 A 的相反方向
+            if (a == c and b == d and opposite_map.get(a) == b):
+                return -Config.PENALTY_ZIGZAG
+        
+        return 0.0
+
+    def _calc_monster_distance_shaping(self, min_dist):
+        """
+        修复3: 怪物距离 shaping - 使用距离增量，远离怪物给正奖励
+        首帧不计算（last_min_dist为None时直接返回0）
+        """
+        # 首帧不计算delta奖励
+        if self.last_min_dist is None:
+            return 0.0
+        
+        # 计算距离变化
+        delta = min_dist - self.last_min_dist
+        
+        is_speedup = self.step_no >= Config.MONSTER_SPEED_UP_STEP
+        shaping_weight = 1.5 if is_speedup else 1.0
+        
+        if delta > 0:
+            # 远离怪物，给正奖励
+            reward = Config.REW_MONSTER_DISTANCE * shaping_weight * min(delta / 10.0, 1.0)
+            return reward
+        elif delta < 0:
+            # 靠近怪物，给负奖励（惩罚）
+            penalty = Config.REW_MONSTER_DISTANCE * shaping_weight * min(-delta / 10.0, 1.0)
+            return -penalty
+        
+        return 0.0
+
     def _get_visible_treasure_ratio(self, hero_pos):
-        """
-        计算当前视野内可见宝箱的比例
-        """
+        """计算当前视野内可见宝箱的比例"""
         visible_count = 0
         total_count = len(self.treasures)
         
@@ -650,21 +708,18 @@ class Preprocessor:
         
         for treasure in self.treasures:
             if treasure.found and treasure.available:
-                # 计算距离
                 dist = np.linalg.norm(treasure.pos - np.array(hero_pos, np.float32))
-                if dist <= 10.0:  # 视野范围
+                if dist <= 10.0:
                     visible_count += 1
         
         return visible_count / total_count
 
-    def _get_reward(self, hero_pos, frame_state):
-        """计算奖励 - 详细版，包含所有参考文献要求的奖励项"""
-        # 基础奖励
+    def _get_reward(self, hero_pos, monsters, treasure_get, buff_get):
+        """计算奖励 - 完整修复版"""
         base_reward = Config.REW_STEP + Config.REW_SURVIVE
         shaped_reward = 0.0
         
-        # ========== 1. 怪物距离计算 ==========
-        monsters = frame_state.get('monsters', [])
+        # ========== 怪物距离计算 ==========
         min_dist = 1000
         for m in monsters:
             m_pos = m.get('pos', {})
@@ -674,34 +729,35 @@ class Preprocessor:
             if dist < min_dist:
                 min_dist = dist
         
-        # ========== 2. 危险惩罚（非线性） ==========
+        # ========== 1. 危险惩罚 ==========
         shaped_reward += self._calc_danger_penalty(min_dist)
         
-        # ========== 3. 怪物距离shaping ==========
-        is_speedup = self.step_no >= Config.MONSTER_SPEED_UP_STEP
-        shaping_weight = 1.5 if is_speedup else 1.0
-        shaped_reward += Config.REW_MONSTER_DISTANCE * shaping_weight * (1 - min(min_dist / 50, 1.0))
+        # ========== 2. 怪物距离 shaping（首帧不计算） ==========
+        shaped_reward += self._calc_monster_distance_shaping(min_dist)
         
-        # ========== 4. 第二只怪压力惩罚 ==========
+        # ========== 3. 第二只怪压力惩罚 ==========
         shaped_reward += self._calc_second_monster_penalty(hero_pos, monsters)
         
-        # ========== 5. 包夹惩罚（详细版） ==========
+        # ========== 4. 包夹惩罚 ==========
         shaped_reward += self._calc_pinch_penalty_detailed(hero_pos, monsters)
         
-        # ========== 6. 开阔度奖励（详细版） ==========
+        # ========== 5. 开阔度奖励 ==========
         shaped_reward += self._calc_corridor_reward_detailed(hero_pos)
         
-        # ========== 7. 死角惩罚 ==========
+        # ========== 6. 死角惩罚 ==========
         shaped_reward += self._calc_dead_end_penalty(hero_pos)
         
-        # ========== 8. 闪现奖励/惩罚（详细版） ==========
-        shaped_reward += self._calc_flash_reward_detailed(hero_pos, monsters, min_dist)
+        # ========== 7. 闪现奖励/惩罚 ==========
+        shaped_reward += self._calc_flash_reward_detailed(hero_pos, min_dist, treasure_get)
         
-        # ========== 9. 临近加速缓冲奖励 ==========
+        # ========== 8. 临近加速缓冲奖励 ==========
         shaped_reward += self._calc_pre_speedup_bonus()
         
-        # ========== 10. 重复探索惩罚 ==========
+        # ========== 9. 重复探索惩罚 ==========
         shaped_reward += self._calc_repeat_explore_penalty(hero_pos)
+        
+        # ========== 10. Z型走/抽搐惩罚 ==========
+        shaped_reward += self._calc_zigzag_penalty()
         
         # ========== 11. 宝箱接近奖励 ==========
         nearest_treasure_dist = 1000
@@ -715,23 +771,16 @@ class Preprocessor:
             treasure_approach = 0.05 * (1 - nearest_treasure_dist / 100)
             shaped_reward += treasure_approach
         
-        # ========== 12. 宝箱拾取奖励 ==========
-        score_info = frame_state.get('score_info', {})
-        curr_count = score_info.get('treasure_collected_count', 0) if score_info else 0
-        treasure_get = curr_count - self.last_treasure_count
+        # ========== 12. 宝箱拾取奖励（修复1：恢复增量奖励） ==========
         if treasure_get > 0:
             treasure_pickup = Config.REW_TREASURE * treasure_get + Config.REW_SURVIVE * 10
             shaped_reward += treasure_pickup
-        self.last_treasure_count = curr_count
         
-        # ========== 13. 增益拾取奖励 ==========
-        buff_count = score_info.get('buff_count', 0) if score_info else 0
-        if hasattr(self, '_last_buff_count'):
-            if buff_count > self._last_buff_count:
-                shaped_reward += Config.REW_SURVIVE * 20
-        self._last_buff_count = buff_count
+        # ========== 13. 增益拾取奖励（修复1：恢复增量奖励） ==========
+        if buff_get > 0:
+            shaped_reward += Config.REW_SURVIVE * 20
         
-        # ========== 14. 连续相同动作惩罚（减少原地抽搐） ==========
+        # ========== 14. 连续相同动作惩罚 ==========
         current_move_action = self.last_action % 8 if self.last_action != -1 else -1
         if current_move_action != -1:
             if current_move_action == self.last_move_action:
@@ -745,15 +794,19 @@ class Preprocessor:
         
         # ========== 15. 撞墙惩罚 ==========
         if self.last_action != -1 and self.last_action < 8:
-            if self.last_hero_pos is not None:
-                dx = self.last_hero_pos[0] - hero_pos[0]
-                dz = self.last_hero_pos[1] - hero_pos[1]
+            if self.last_hero_pos_for_reward is not None:
+                dx = self.last_hero_pos_for_reward[0] - hero_pos[0]
+                dz = self.last_hero_pos_for_reward[1] - hero_pos[1]
                 if abs(dx) < 0.1 and abs(dz) < 0.1:
                     shaped_reward -= Config.PENALTY_HIT_WALL
         
-        # 记录上一帧的怪物距离
-        self._last_min_dist = min_dist
+        # ========== 16. 欧几里得距离探索奖励 ==========
+        distance_reward = self._calc_distance_explore_reward(hero_pos)
+        shaped_reward += distance_reward
+        
+        # 更新历史距离
+        self.last_min_dist = min_dist
         
         total_reward = base_reward + shaped_reward
         
-        return total_reward, shaped_reward
+        return total_reward, shaped_reward, distance_reward
