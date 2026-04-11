@@ -33,12 +33,12 @@ class Config:
     TREASURE_NUM = 10
 
     # ==================== 奖励参数 ====================
-    REW_STEP = 1.5
+    REW_STEP = 0.4 #old1.5
     REW_TREASURE = 100
     REW_FLASH = 0.1
     REW_SURVIVE = 0.05
     REW_MONSTER_DISTANCE = 0.3
-    PENALTY_HIT_WALL = 0.5
+    PENALTY_HIT_WALL = 0.25 #old0.5
     
     # 新增奖励参数
     REW_CORRIDOR = 0.2
@@ -50,9 +50,19 @@ class Config:
     PENALTY_FLASH_ABUSE = 0.5
     DANGER_THRESHOLD = 10.0
     DANGER_THRESHOLD_POST = 15.0
+    
+    # ==================== 欧几里得距离探索奖励参数 ====================
+    REW_DISTANCE_EXPLORE = 0.02      # 距离探索奖励系数
+    MAX_DISTANCE_REWARD = 0.2 #old2.0        # 单步距离奖励上限
+    DISTANCE_FEATURE_NORM = 180.0    # 距离特征归一化最大值
+    
+    # ==================== Z型走/抽搐惩罚参数 ====================
+    PENALTY_ZIGZAG = 0.1             # 往返抽搐惩罚
 
     # ==================== 特征维度 ====================
-    HERO_FEATURE_DIM = 5
+    # 英雄特征：位置(2) + 闪现可用(1) + 闪现cd(1) + buff状态(1) + 距离起始位置(1) = 6
+    HERO_FEATURE_DIM = 6              # 从5改为6
+    
     MONSTER_FEATURE_DIM = 5
     MONSTER_NUM = 2
     MONSTER_TOTAL_DIM = 10
@@ -85,13 +95,11 @@ class Config:
         ACTION_NUM,       # prob
     ]
     
-    # ==================== 网络配置（新增） ====================
-    # 实体embedding维度
+    # ==================== 网络配置 ====================
     EMBEDDING_DIM = 64
     MAP_EMBEDDING_DIM = 128
     NUM_HEADS = 4
     
-    # 各实体特征维度
     HERO_RAW_DIM = HERO_FEATURE_DIM
     TREASURE_PER_RAW_DIM = TREASURE_FEATURE_DIM
     MONSTER_PER_RAW_DIM = MONSTER_FEATURE_DIM
@@ -99,7 +107,6 @@ class Config:
     MAP_RAW_CHANNELS = MAP_CHANNELS
     MAP_RAW_SIZE = MAP_SIZE
     
-    # 注意力的键/值维度
     KEY_DIM = 64
     VALUE_DIM = 64
 
@@ -136,5 +143,6 @@ class CurriculumConfig:
 
 
 if __name__ == '__main__':
+    print(f"HERO_FEATURE_DIM = {Config.HERO_FEATURE_DIM}")
     print(f"FEATURE_LEN = {Config.FEATURE_LEN}")
     print(f"ACTION_NUM = {Config.ACTION_NUM}")
