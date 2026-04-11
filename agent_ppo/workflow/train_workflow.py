@@ -16,7 +16,7 @@ import random
 
 import numpy as np
 from agent_ppo.feature.definition import SampleData, sample_process
-from agent_ppo.feature.preprocessor import get_hero_info_and_pos  # 新增导入
+from agent_ppo.feature.preprocessor import get_hero_info_and_pos
 from tools.metrics_utils import get_training_metrics
 from tools.train_env_conf_validate import read_usr_conf
 from common_python.utils.workflow_disaster_recovery import handle_disaster_recovery
@@ -32,7 +32,6 @@ def workflow(envs, agents, logger=None, monitor=None, *args, **kwargs):
     env = envs[0]
     agent = agents[0]
 
-    # Read user config / 读取用户配置
     usr_conf = read_usr_conf("agent_ppo/conf/train_env_conf.toml", logger)
     if usr_conf is None:
         logger.error("usr_conf is None, please check agent_ppo/conf/train_env_conf.toml")
@@ -68,19 +67,14 @@ class EpisodeRunner:
         self.last_report_monitor_time = 0
         self.last_get_training_metrics_time = 0
         
-        # 课程学习调度器
         self.curriculum = CurriculumScheduler(0)
-        
-        # 验证间隔
         self.val_interval = CurriculumConfig.VALIDATION_INTERVAL
         
-        # 统计累计指标（用于计算比率）
         self.total_terminated = 0
         self.total_completed = 0
         self.total_abnormal = 0
 
     def run_episodes(self):
-        """Run a single episode and yield collected samples."""
         while True:
             # ========== 1. 获取课程配置 ==========
             stage_config = self.curriculum.get_current_config()
@@ -93,7 +87,6 @@ class EpisodeRunner:
                 f"SpeedUp:{stage_config['monster_speed_up_step']}"
             )
             
-            # 更新环境配置
             env_conf = self.usr_conf.get('env_conf', {})
             env_conf['treasure_num'] = stage_config['treasure_num']
             env_conf['buff_num'] = stage_config['buff_num']
@@ -101,7 +94,6 @@ class EpisodeRunner:
             env_conf['monster_speed_up_step'] = stage_config['monster_speed_up_step']
             self.usr_conf['env_conf'] = env_conf
             
-            # 随机选择训练地图
             train_map_ids = self.curriculum.get_train_map_ids()
             map_id = random.choice(train_map_ids)
             self.usr_conf['env_conf']['map_id'] = map_id
@@ -109,7 +101,6 @@ class EpisodeRunner:
             # ========== 2. 重置环境 ==========
             env_obs = self.env.reset(self.usr_conf)
 
-            # Disaster recovery
             if handle_disaster_recovery(env_obs, self.logger):
                 continue
 
@@ -119,7 +110,12 @@ class EpisodeRunner:
 
             obs_data, remain_info = self.agent.observation_process(env_obs)
             
-            # 创建指标收集器
+            # ========== 设置起始位置（用于欧几里得距离探索奖励） ==========
+            observation = env_obs.get("observation", {})
+            frame_state = observation.get("frame_state", {})
+            hero_info, hero_pos = get_hero_info_and_pos(frame_state)
+            self.agent.preprocessor.set_start_pos(hero_pos)
+            
             speed_up_step = stage_config['monster_speed_up_step']
             metrics = EpisodeMetrics(speed_up_step)
 
@@ -129,19 +125,17 @@ class EpisodeRunner:
             step = 0
             total_reward = 0.0
             total_shaped_reward = 0.0
+            total_distance_reward = 0.0
 
             self.logger.info(f"Episode {self.episode_cnt} start on map {map_id}")
 
             # ========== 4. 对局循环 ==========
             while not done:
-                # Predict action
                 act_data = self.agent.predict(list_obs_data=[obs_data])[0]
                 act = self.agent.action_process(act_data)
 
-                # Step env
                 env_reward, env_obs = self.env.step(act)
 
-                # Disaster recovery
                 if handle_disaster_recovery(env_obs, self.logger):
                     break
 
@@ -150,16 +144,16 @@ class EpisodeRunner:
                 step += 1
                 done = terminated or truncated
 
-                # Next observation
                 _obs_data, _remain_info = self.agent.observation_process(env_obs)
 
                 # Step reward
                 reward = _remain_info.get("reward", [0.0])[0] if isinstance(_remain_info.get("reward"), list) else _remain_info.get("reward", 0.0)
                 shaped_reward = _remain_info.get("shaped_reward", 0.0)
+                distance_reward = _remain_info.get("distance_reward", 0.0)
                 total_reward += reward
                 total_shaped_reward += shaped_reward
+                total_distance_reward += distance_reward
                 
-                # 获取得分信息
                 observation = env_obs.get("observation", {})
                 frame_state = observation.get("frame_state", {})
                 score_info = frame_state.get("score_info", {})
@@ -167,16 +161,13 @@ class EpisodeRunner:
                 treasure_score = score_info.get("treasure_score", 0)
                 total_score = score_info.get("total_score", 0)
                 
-                # 判断是否使用了闪现
                 is_flash = act >= 8
                 
-                # 获取闪现是否可用（使用模块级函数）
                 hero_info, _ = get_hero_info_and_pos(frame_state)
                 talent = hero_info.get('talent', {})
                 flash_ready = talent.get('status', 0) == 1
                 is_flash_legal = flash_ready
                 
-                # 更新指标
                 metrics.update(
                     step=step,
                     reward=reward,
@@ -186,10 +177,10 @@ class EpisodeRunner:
                     shaped_reward=shaped_reward,
                     is_flash=is_flash,
                     is_flash_legal=is_flash_legal,
-                    flash_ready=flash_ready
+                    flash_ready=flash_ready,
+                    distance_reward=distance_reward
                 )
 
-                # Terminal reward
                 final_reward = 0.0
                 if done:
                     total_score = env_obs.get("observation", {}).get("env_info", {}).get("total_score", 0)
@@ -209,17 +200,13 @@ class EpisodeRunner:
                     
                     total_reward += final_reward
                     
-                    # 设置终局指标
                     metrics.set_terminal_state(terminated, truncated, final_reward)
                     
-                    # 设置最终可见宝箱比例
                     visible_treasure_ratio = _remain_info.get("visible_treasure_ratio", 0.0)
                     metrics.set_final_visible_treasure(visible_treasure_ratio)
                     
-                    # 获取最终指标摘要
                     summary = metrics.get_summary()
                     
-                    # 计算比率指标
                     total_episodes = self.total_terminated + self.total_completed + self.total_abnormal
                     terminated_rate = self.total_terminated / max(total_episodes, 1)
                     completed_rate = self.total_completed / max(total_episodes, 1)
@@ -234,6 +221,7 @@ class EpisodeRunner:
                         f"Treasures:{summary['treasures']} | "
                         f"TotalReward:{total_reward:.3f} | "
                         f"ShapedReward:{total_shaped_reward:.3f} | "
+                        f"DistanceReward:{total_distance_reward:.3f} | "
                         f"FlashCount:{summary['flash_count']} | "
                         f"LastFlashReady:{summary['last_flash_ready']} | "
                         f"LastFlashLegal:{summary['last_flash_legal']} | "
@@ -243,7 +231,6 @@ class EpisodeRunner:
                         f"CompletedRate:{completed_rate:.3f}"
                     )
                     
-                    # 上报监控
                     now = time.time()
                     if now - self.last_report_monitor_time >= 60 and self.monitor:
                         monitor_data = {
@@ -271,11 +258,13 @@ class EpisodeRunner:
                             "completed": 1 if summary['completed'] else 0,
                             "terminated_rate": terminated_rate,
                             "completed_rate": completed_rate,
+                            "total_distance_reward": summary.get('total_distance_reward', 0),
+                            "pre_distance_reward": summary.get('pre_distance_reward', 0),
+                            "post_distance_reward": summary.get('post_distance_reward', 0),
                         }
                         self.monitor.put_data({os.getpid(): monitor_data})
                         self.last_report_monitor_time = now
 
-                # Build sample frame
                 frame = SampleData(
                     obs=np.array(obs_data.feature, dtype=np.float32),
                     legal_action=np.array(obs_data.legal_action, dtype=np.float32),
@@ -290,7 +279,6 @@ class EpisodeRunner:
                 )
                 collector.append(frame)
 
-                # Episode end
                 if done:
                     if collector:
                         collector[-1].reward = collector[-1].reward + final_reward
@@ -300,20 +288,16 @@ class EpisodeRunner:
                         yield collector
                     break
 
-                # Update state
                 obs_data = _obs_data
                 remain_info = _remain_info
             
-            # ========== 5. 更新课程进度 ==========
             self.curriculum.update_episode(self.episode_cnt)
             
-            # ========== 6. 定期验证 ==========
             if self.episode_cnt % self.val_interval == 0:
                 val_metrics = run_validation(
                     self.agent, self.env, self.usr_conf, 
                     self.logger, self.episode_cnt
                 )
-                # 上报验证指标
                 if self.monitor:
                     val_monitor_data = {
                         "val_reward": val_metrics.get('total_reward', 0),
@@ -322,7 +306,6 @@ class EpisodeRunner:
                     }
                     self.monitor.put_data({os.getpid(): val_monitor_data})
                 
-                # 输出验证对比日志
                 self.logger.info(
                     f"[VALIDATION_COMPARE] Episode {self.episode_cnt} | "
                     f"Train Reward:{total_reward:.3f} | "
