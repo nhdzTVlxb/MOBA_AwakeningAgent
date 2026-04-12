@@ -113,7 +113,7 @@ class CurriculumConfig:
     """课程学习配置"""
 
     # 训练地图ID列表
-    TRAIN_MAP_IDS = [1, 2, 3, 4, 5]
+    TRAIN_MAP_IDS = [1, 2, 3, 4, 5,8,9,10]
 
     # 验证地图ID列表
     VALID_MAP_IDS = [6, 7]
