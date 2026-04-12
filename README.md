@@ -4,7 +4,7 @@
 ## Changelog
 
 ### 
-### 2026-04-12 PPO3.0 Update（PPO 3.0 is running.）
+### 2026-04-13 PPO3.0 Update（PPO 3.0 is running.）
 
 #### Overview
 This update shifts the training focus from "survival by walking" to "active treasure collection and strategic flash usage". The hero feature dimension is expanded from 6 to 10, adding 4 flash-prior features. A staged flash reward system and segmented treasure rewards are introduced.
