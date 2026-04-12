@@ -22,7 +22,6 @@ class Config:
     INIT_LEARNING_RATE_START = 1e-4
 
     # ========== 环境配置 ==========
-    # 与你当前环境 TOML 对齐：max_step=1000, monster_interval=300, monster_speedup=500
     MAX_STEPS = 1000
     MONSTER_SPEED_UP_STEP = 500
     MONSTER2_SPAWN_STEP = 300
