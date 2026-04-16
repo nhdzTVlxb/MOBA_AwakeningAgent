@@ -446,10 +446,23 @@ def workflow(envs, agents, logger=None, monitor=None, *args, **kwargs):
         eval_episodes=10,
     )
 
+    pending_batch = []
+    pending_episode_count = 0
+
     while True:
         for g_data in episode_runner.run_episodes():
-            agent.send_sample_data(g_data)
+            # 先把这一局样本并进总 batch
+            pending_batch.extend(g_data)
+            pending_episode_count += 1
+
+            # 原 episode 样本可以清掉，避免重复占内存
             g_data.clear()
+
+            # 满 4 局再训练一次
+            if pending_episode_count >= Config.TRAIN_BATCH_EPISODES:
+                agent.send_sample_data(pending_batch)
+                pending_batch.clear()
+                pending_episode_count = 0
 
             now = time.time()
             if now - last_save_model_time >= 1800:
