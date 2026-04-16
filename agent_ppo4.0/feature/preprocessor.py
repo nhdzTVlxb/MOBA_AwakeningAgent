@@ -179,6 +179,15 @@ class Preprocessor:
         self.last_target_buff_id = None
         self.last_target_buff_distance = None
         self.early_loot_stall_steps = 0
+        
+        # 连续撞墙追踪
+        self.consecutive_hit_wall_count = 0
+        self.last_hit_wall_action = -1
+        self.last_move_action_for_backtrack = -1
+        
+        # 开阔度追踪（用于 cooldown escape）
+        self.last_local_openness = 0.0
+        
         self.configure_episode(usr_conf)
 
     def configure_episode(self, usr_conf=None):
@@ -389,6 +398,9 @@ class Preprocessor:
             monsters=monsters,
             second_monster_distance=second_monster_distance,
             speedup_state=speedup_state,
+            hero=hero,
+            pinch_risk=pinch_risk,
+            topology_summary=topology_summary,
         )
 
         self.last_min_monster_distance = min_monster_distance
@@ -496,6 +508,36 @@ class Preprocessor:
             "speedup_step": float(speedup_step),
         }
 
+    def _can_wait_for_flash(self, flash_cooldown, min_monster_distance, monster_speed, danger_level, survival_pressure):
+        """
+        判断当前是否允许等待闪现CD转好
+        
+        返回:
+            can_wait: bool - 是否允许等
+            reason: str - 原因（用于调试）
+            catch_steps: float - 怪物预计追上所需步数
+        """
+        if flash_cooldown <= 0:
+            return False, "no_cooldown", 0.0
+        
+        # 估算怪物追上需要的步数
+        monster_speed = max(monster_speed, 1.0)
+        catch_steps = min_monster_distance / monster_speed
+        
+        # 条件1：危险度过高 → 不允许等
+        if danger_level >= Config.WAIT_FLASH_DANGER_THRESHOLD:
+            return False, "too_dangerous", catch_steps
+        
+        if survival_pressure >= Config.WAIT_FLASH_DANGER_THRESHOLD:
+            return False, "too_much_pressure", catch_steps
+        
+        # 条件2：怪物追上时间 < CD时间 + 安全余量 → 不允许等（会被追上）
+        if catch_steps < flash_cooldown + Config.WAIT_FLASH_SAFE_MARGIN_STEPS:
+            return False, "will_be_caught", catch_steps
+        
+        # 允许等闪
+        return True, "safe_to_wait", catch_steps
+
     def _update_movement_state(self, hero_pos, last_action):
         movement_state = {
             "hit_wall": False,
@@ -505,12 +547,16 @@ class Preprocessor:
             "flash_origin_blocked": False,
             "flash_path_blocked_cells": 0.0,
             "flash_through_wall": False,
+            "wall_backtrack": False,
+            "consecutive_hit_wall_count": 0,
         }
 
         if self.last_hero_pos is None or last_action == -1:
             self.blocked_move_actions.clear()
             self.stagnation_steps = 0
             self.oscillation_steps = 0
+            self.consecutive_hit_wall_count = 0
+            self.last_hit_wall_action = -1
             return movement_state
 
         moved_distance = float(np.linalg.norm(hero_pos - self.last_hero_pos))
@@ -525,16 +571,32 @@ class Preprocessor:
                 and moved_distance >= Config.FLASH_THROUGH_WALL_MIN_MOVE_DISTANCE
             )
 
+        if 0 <= int(last_action) < 8 and moved_distance < Config.HIT_WALL_DISTANCE_THRESHOLD:
+            movement_state["hit_wall"] = True
+            self.blocked_move_actions.add(int(last_action))
+            
+            self.consecutive_hit_wall_count = min(self.consecutive_hit_wall_count + 1, 5)
+            self.last_hit_wall_action = int(last_action)
+        else:
+            self.blocked_move_actions.clear()
+            self.consecutive_hit_wall_count = max(self.consecutive_hit_wall_count - 1, 0)
+        
+        movement_state["consecutive_hit_wall_count"] = self.consecutive_hit_wall_count
+
+        wall_backtrack = False
+        if 0 <= int(last_action) < 8 and self.last_move_action_for_backtrack >= 0:
+            is_opposite = (int(last_action) == OPPOSITE_MOVE_ACTION.get(self.last_move_action_for_backtrack, -1))
+            if is_opposite and movement_state["hit_wall"]:
+                wall_backtrack = True
+            elif self.consecutive_hit_wall_count >= 2 and moved_distance < Config.HIT_WALL_DISTANCE_THRESHOLD:
+                wall_backtrack = True
+        
+        movement_state["wall_backtrack"] = wall_backtrack
+
         if moved_distance < Config.STAGNATION_MOVE_THRESHOLD:
             self.stagnation_steps = min(self.stagnation_steps + 1, Config.STAGNATION_MAX_STEPS)
         else:
             self.stagnation_steps = max(self.stagnation_steps - 1, 0)
-
-        if 0 <= int(last_action) < 8 and moved_distance < Config.HIT_WALL_DISTANCE_THRESHOLD:
-            movement_state["hit_wall"] = True
-            self.blocked_move_actions.add(int(last_action))
-        else:
-            self.blocked_move_actions.clear()
 
         bounced_back = False
         if 0 <= int(last_action) < 8 and 0 <= self.last_move_action < 8 and self.prev_hero_pos is not None:
@@ -558,6 +620,9 @@ class Preprocessor:
         movement_state["oscillation_ratio"] = float(
             np.clip(self.oscillation_steps / float(max(1, Config.OSCILLATION_MAX_STEPS)), 0.0, 1.0)
         )
+        
+        self.last_move_action_for_backtrack = int(last_action) if 0 <= int(last_action) < 8 else -1
+        
         return movement_state
 
     def _register_visit(self, hero_pos):
@@ -1191,6 +1256,9 @@ class Preprocessor:
         monsters,
         second_monster_distance,
         speedup_state,
+        hero=None,
+        pinch_risk=0.0,
+        topology_summary=None,
     ):
         post_speedup = speedup_state["speedup_reached"] >= 1.0
         early_loot_phase = self._is_early_loot_phase(min_monster_distance, speedup_state)
@@ -1437,6 +1505,7 @@ class Preprocessor:
                 )
                 flash_waste_penalty = -Config.FLASH_WASTE_PENALTY * waste_multiplier
 
+        # 原有行为约束惩罚（系数已加强）
         hit_wall_penalty = -Config.HIT_WALL_PENALTY if movement_state["hit_wall"] else 0.0
         revisit_intensity = self._revisit_intensity(hero_pos)
         revisit_penalty = -Config.REVISIT_PENALTY_COEF * revisit_intensity
@@ -1468,6 +1537,60 @@ class Preprocessor:
         if early_loot_active:
             explore_bonus *= Config.EARLY_LOOT_EXPLORE_BONUS_MULTIPLIER
 
+        # ========== Cooldown-aware 等待闪判断 ==========
+        if hero is not None:
+            flash_cooldown = self._extract_flash_cooldown(hero)
+        else:
+            flash_cooldown = 0.0
+        
+        monster_speed = speedup_state.get("monster_speed", 1.0)
+        danger_level = self._compute_danger_level(min_monster_distance, pinch_risk, speedup_state)
+        survival_pressure = self._compute_survival_pressure(danger_level, pinch_risk, speedup_state, second_monster_distance)
+        
+        can_wait, wait_reason, catch_steps = self._can_wait_for_flash(
+            flash_cooldown, min_monster_distance, monster_speed, danger_level, survival_pressure
+        )
+        
+        # ========== CD中强制走脱奖励 ==========
+        cooldown_escape_reward = 0.0
+        if flash_cooldown > 0 and not can_wait and not flash_used:
+            dist_gain_abs = min_monster_distance - self.last_min_monster_distance
+            dist_gain_ratio = self._away_reward(self.last_min_monster_distance, min_monster_distance)
+            if dist_gain_abs >= Config.COOLDOWN_ESCAPE_MIN_DIST_GAIN and movement_state["moved_distance"] > 0:
+                cooldown_escape_reward = Config.COOLDOWN_ESCAPE_REWARD_COEF * min(dist_gain_ratio, 1.0)
+                
+                if topology_summary is not None and hasattr(self, 'last_local_openness'):
+                    openness_gain = topology_summary["local_openness"] - self.last_local_openness
+                    if openness_gain > 0:
+                        cooldown_escape_reward += Config.COOLDOWN_ESCAPE_OPENNESS_COEF * min(openness_gain, 1.0)
+        
+        # ========== 等闪失败惩罚 ==========
+        wait_flash_penalty = 0.0
+        if flash_cooldown > 0 and not can_wait and not flash_used:
+            if movement_state["stagnation_ratio"] > 0.5:
+                wait_flash_penalty = -Config.WAIT_FLASH_PENALTY * movement_state["stagnation_ratio"]
+            if movement_state["oscillation_ratio"] > 0.3:
+                wait_flash_penalty -= Config.WAIT_FLASH_PENALTY * movement_state["oscillation_ratio"] * Config.WAIT_FLASH_OSCILLATION_MULTIPLIER
+            if movement_state["hit_wall"]:
+                wait_flash_penalty -= Config.WAIT_FLASH_PENALTY * Config.WAIT_FLASH_HIT_WALL_MULTIPLIER
+        
+        # ========== 连续撞墙回头惩罚 ==========
+        wall_backtrack_penalty = 0.0
+        if movement_state["wall_backtrack"]:
+            wall_backtrack_penalty = -Config.WALL_BACKTRACK_PENALTY
+        if movement_state["consecutive_hit_wall_count"] >= 2:
+            wall_backtrack_penalty -= Config.CONSECUTIVE_HIT_WALL_PENALTY * movement_state["consecutive_hit_wall_count"]
+
+        # 等待场景下，行为惩罚减轻（允许短暂等待）
+        if flash_cooldown > 0 and can_wait:
+            stagnation_penalty *= 0.5
+            oscillation_penalty *= 0.5
+            revisit_penalty *= 0.5
+            
+            max_allowed_stagnation = Config.WAIT_FLASH_MAX_STAGNATION_TOLERANCE / float(max(1, Config.STAGNATION_MAX_STEPS))
+            if movement_state["stagnation_ratio"] > max_allowed_stagnation:
+                wait_flash_penalty -= Config.WAIT_FLASH_PENALTY
+
         reward_terms = {
             "survive_reward": survive_reward,
             "dist_shaping": dist_shaping,
@@ -1491,7 +1614,15 @@ class Preprocessor:
             "revisit_penalty": revisit_penalty,
             "no_vision_patrol_bonus": no_vision_patrol_bonus,
             "explore_bonus": explore_bonus,
+            "cooldown_escape_reward": cooldown_escape_reward,
+            "wait_flash_penalty": wait_flash_penalty,
+            "wall_backtrack_penalty": wall_backtrack_penalty,
         }
+        
+        # 每一步都更新开阔度，供下一步比较使用
+        if topology_summary is not None:
+            self.last_local_openness = topology_summary["local_openness"]
+        
         reward = float(sum(reward_terms.values()))
         return reward, reward_terms
 
