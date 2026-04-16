@@ -48,52 +48,52 @@ class Config:
     TARGET_KL = 0.015
 
     # Reward shaping / 奖励设计
-    # --- 生存类（降权，避免压过宝箱信号） ---
-    SURVIVE_REWARD = 0.001                          # 0.005→0.001：2000步累积 10→2
-    DIST_SHAPING_COEF = 0.03                        # 0.05→0.03：距离 shaping 降权
-    POST_SPEEDUP_SURVIVE_MULTIPLIER = 1.15          # 1.5→1.15：加速后生存乘数大幅降低
-    POST_SPEEDUP_DIST_MULTIPLIER = 1.1              # 1.4→1.1：加速后距离 shaping 降低
-    TRUNCATED_BONUS = 4.0                           # 8.0→4.0：存活终局奖励减半
-    TERMINATED_PENALTY = -8.0                       # -12→-8：死亡惩罚降低（避免过度恐惧）
+    # --- 生存类 ---
+    SURVIVE_REWARD = 0.001
+    DIST_SHAPING_COEF = 0.03
+    POST_SPEEDUP_SURVIVE_MULTIPLIER = 1.15
+    POST_SPEEDUP_DIST_MULTIPLIER = 1.1
+    TRUNCATED_BONUS = 4.0
+    TERMINATED_PENALTY = -8.0
 
-    # --- 宝箱类（大幅强化） ---
-    TREASURE_REWARD = 2.5                           # 1.2→2.5：单个宝箱奖励翻倍+
-    BUFF_REWARD = 0.5                               # 0.3→0.5：buff 奖励提升
-    TREASURE_DIST_COEF = 0.18                       # 0.1→0.18：接近宝箱 shaping 大幅增强
-    CLOSE_TREASURE_APPROACH_COEF = 0.15             # 0.08→0.15：近距离冲刺奖励翻倍
-    TREASURE_MISS_PENALTY = 0.3                     # 0.15→0.3：走近又走开的惩罚翻倍
-    TREASURE_MISS_DISTANCE = 22.0                   # 18→22：miss 判定距离放宽
-    TREASURE_MISS_MARGIN = 2.5                      # 3→2.5：更敏感的 miss 判定
-    TREASURE_URGENCY_DISTANCE = 28.0                # 20→28：紧急接近距离放宽
-    EXIT_DIST_COEF = 0.06                           # 0.04→0.06：无宝箱时趋近 buff 增强
+    # --- 宝箱类 ---
+    TREASURE_REWARD = 2.5
+    BUFF_REWARD = 0.5
+    TREASURE_DIST_COEF = 0.18
+    CLOSE_TREASURE_APPROACH_COEF = 0.15
+    TREASURE_MISS_PENALTY = 0.3
+    TREASURE_MISS_DISTANCE = 22.0
+    TREASURE_MISS_MARGIN = 2.5
+    TREASURE_URGENCY_DISTANCE = 28.0
+    EXIT_DIST_COEF = 0.06
 
     # --- 宝箱优先级调整 ---
-    TREASURE_PRIORITY_DISTANCE = 36.0               # 32→36：宝箱优先判定距离略放宽
-    SINGLE_MONSTER_TREASURE_PRESSURE_DISTANCE = 65.0  # 60→65：单怪压力距离略放宽
-    SINGLE_MONSTER_TREASURE_PRIORITY_MULTIPLIER = 2.2   # 1.8→2.2：单怪阶段宝箱优先级大幅提升
-    DOUBLE_MONSTER_TREASURE_PRIORITY_MULTIPLIER = 1.6   # 1.35→1.6：双怪阶段宝箱优先级提升
-    POST_SPEEDUP_TREASURE_PRIORITY_MULTIPLIER = 0.8     # 0.65→0.8：加速后宝箱不要降太多
+    TREASURE_PRIORITY_DISTANCE = 36.0
+    SINGLE_MONSTER_TREASURE_PRESSURE_DISTANCE = 65.0
+    SINGLE_MONSTER_TREASURE_PRIORITY_MULTIPLIER = 2.2
+    DOUBLE_MONSTER_TREASURE_PRIORITY_MULTIPLIER = 1.6
+    POST_SPEEDUP_TREASURE_PRIORITY_MULTIPLIER = 0.8
 
-    # --- 前期捡箱窗口（整体强化） ---
+    # --- 前期捡箱窗口 ---
     EARLY_LOOT_SAFE_DISTANCE = 85.0
-    EARLY_LOOT_TREASURE_PRIORITY_MULTIPLIER = 2.2  # 1.75→2.2：前期捡箱宝箱优先级提升
-    EARLY_LOOT_DIST_SHAPING_MULTIPLIER = 0.55      # 0.45→0.55：前期距离 shaping 增强
-    EARLY_LOOT_REVISIT_PENALTY_MULTIPLIER = 0.4    # 0.6→0.4：前期绕圈惩罚增强（系数越小=惩罚越重）
-    EARLY_LOOT_EXPLORE_BONUS_MULTIPLIER = 0.5      # 0.0→0.5：前期探索奖励重新开放
-    EARLY_LOOT_COLLECTION_BONUS = 0.6              # 0.25→0.6：前期捡箱额外奖励翻倍+
-    EARLY_LOOT_FIRST_TREASURE_BONUS = 1.0          # 0.4→1.0：第一个宝箱额外奖励大幅提升
-    EARLY_LOOT_STALL_STEP_THRESHOLD = 15           # 20→15：更早触发停滞惩罚
-    EARLY_LOOT_STALL_PROGRESS_THRESHOLD = 1.5      # 1.0→1.5：停滞判定更宽松（进步少就算停滞）
-    EARLY_LOOT_STALL_PENALTY = 0.03                # 0.012→0.03：停滞惩罚加强
+    EARLY_LOOT_TREASURE_PRIORITY_MULTIPLIER = 2.2
+    EARLY_LOOT_DIST_SHAPING_MULTIPLIER = 0.55
+    EARLY_LOOT_REVISIT_PENALTY_MULTIPLIER = 0.4
+    EARLY_LOOT_EXPLORE_BONUS_MULTIPLIER = 0.5
+    EARLY_LOOT_COLLECTION_BONUS = 0.6
+    EARLY_LOOT_FIRST_TREASURE_BONUS = 1.0
+    EARLY_LOOT_STALL_STEP_THRESHOLD = 15
+    EARLY_LOOT_STALL_PROGRESS_THRESHOLD = 1.5
+    EARLY_LOOT_STALL_PENALTY = 0.03
 
     # --- 双怪与压力 ---
     DOUBLE_MONSTER_PINCH_DISTANCE = 90.0
     DOUBLE_MONSTER_PINCH_COS_THRESHOLD = -0.25
     PRE_SPEEDUP_BUFFER_WINDOW = 120
-    PRE_SPEEDUP_BUFFER_SAFE_DISTANCE = 55.0        # 60→55：缓冲安全距离收紧
-    PRE_SPEEDUP_BUFFER_COEF = 0.03                 # 0.04→0.03：缓冲期奖励降权
+    PRE_SPEEDUP_BUFFER_SAFE_DISTANCE = 55.0
+    PRE_SPEEDUP_BUFFER_COEF = 0.03
     SECOND_MONSTER_PRESSURE_THRESHOLD = 70.0
-    SECOND_MONSTER_PRESSURE_COEF = 0.025           # 0.03→0.025：第二只怪压力略降
+    SECOND_MONSTER_PRESSURE_COEF = 0.025
 
     # --- 闪现奖励 ---
     FLASH_ESCAPE_REWARD_COEF = 0.05
@@ -108,19 +108,40 @@ class Config:
     FLASH_WASTE_MIN_ESCAPE_GAIN = 8.0
     FLASH_FAR_WASTE_MULTIPLIER = 1.5
 
-    # --- 行为约束（不变） ---
-    HIT_WALL_PENALTY = 0.05
+    # ========== 新增：Cooldown-aware 等待闪判断 ==========
+    WAIT_FLASH_SAFE_MARGIN_STEPS = 6.0      # 怪物追上时间需比CD多多少步才允许等
+    WAIT_FLASH_DANGER_THRESHOLD = 0.45      # 危险度超过此值不允许等
+    WAIT_FLASH_MAX_STAGNATION_TOLERANCE = 2  # 最多允许原地磨几步
+
+    # ========== 新增：CD中强制走脱奖励 ==========
+    COOLDOWN_ESCAPE_REWARD_COEF = 0.08      # 走脱奖励系数
+    COOLDOWN_ESCAPE_MIN_DIST_GAIN = 6.0     # 最小有效距离增益
+    COOLDOWN_ESCAPE_OPENNESS_COEF = 0.05    # 开阔度增益系数
+
+    # ========== 新增：等闪失败惩罚 ==========
+    WAIT_FLASH_PENALTY = 0.12               # 不该等却等的惩罚
+    WAIT_FLASH_OSCILLATION_MULTIPLIER = 1.8  # 等闪时振荡惩罚倍数
+    WAIT_FLASH_HIT_WALL_MULTIPLIER = 2.0    # 等闪时撞墙惩罚倍数
+
+    # ========== 新增：连续撞墙回头惩罚 ==========
+    WALL_BACKTRACK_PENALTY = 0.15           # 撞墙后回头惩罚
+    CONSECUTIVE_HIT_WALL_PENALTY = 0.08     # 连续撞墙累积惩罚
+
+    # ========== 现有行为约束加强（系数调整） ==========
+    HIT_WALL_PENALTY = 0.10                 # 0.05 → 0.10
+    STAGNATION_PENALTY_COEF = 0.10          # 0.05 → 0.10
+    OSCILLATION_PENALTY_COEF = 0.10         # 0.06 → 0.10
+    REVISIT_PENALTY_COEF = 0.04             # 0.02 → 0.04
+    NO_VISION_PATROL_BONUS_COEF = 0.03      # 0.02 → 0.03
+
+    # --- 行为约束 ---
     HIT_WALL_DISTANCE_THRESHOLD = 0.5
     STAGNATION_MOVE_THRESHOLD = 0.75
     STAGNATION_MAX_STEPS = 6
-    STAGNATION_PENALTY_COEF = 0.05
     OSCILLATION_RETURN_DISTANCE = 1.25
     OSCILLATION_MAX_STEPS = 4
-    OSCILLATION_PENALTY_COEF = 0.06
     NO_VISION_STAGNATION_MULTIPLIER = 1.5
     NO_VISION_PATROL_MOVE_DISTANCE = 1.0
-    NO_VISION_PATROL_BONUS_COEF = 0.02
-    REVISIT_PENALTY_COEF = 0.02
     REVISIT_WINDOW_SIZE = 3
 
     # Monitor reporting / 监控上报
@@ -144,9 +165,9 @@ class Config:
     MAP_ENCODER_DIM = 128
     CONTROL_ENCODER_DIM = 32
     FUSION_HIDDEN_DIM = 128
-
+    
+    TRAIN_BATCH_EPISODES = 4
     # Episode curriculum / 课程式训练分布 
-    RESUME_CURRICULUM_STAGE_NAME = "hard_generalization" 
     RESUME_CURRICULUM_STAGE_NAME = "hard_generalization" 
     CURRICULUM_STAGES = ( 
         { 
