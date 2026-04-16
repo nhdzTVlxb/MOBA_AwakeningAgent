@@ -145,44 +145,44 @@ class Config:
     CONTROL_ENCODER_DIM = 32
     FUSION_HIDDEN_DIM = 128
 
-    # Episode curriculum / 课程式训练分布
-    RESUME_CURRICULUM_STAGE_NAME = "hard_generalization"
-    RESUME_CURRICULUM_STAGE_NAME = "hard_generalization"
-    CURRICULUM_STAGES = (
-        {
-            "name": "warmup_stable",
-            "max_train_episode": 149,
-            "treasure_count": (9, 10),
-            "buff_count": (2, 2),
-            "monster_interval": (220, 300),
-            "monster_speedup": (360, 460),
-            "max_step": 2000,
-        },
-        {
-            "name": "mid_pressure",
-            "max_train_episode": 499,
-            "treasure_count": (8, 10),
-            "buff_count": (1, 2),
-            "monster_interval": (160, 280),
-            "monster_speedup": (240, 420),
-            "max_step": 2000,
-        },
-        {
-            "name": "late_speedup_survival",
-            "max_train_episode": 899,
-            "treasure_count": (7, 10),
-            "buff_count": (1, 2),
-            "monster_interval": (120, 220),
-            "monster_speedup": (180, 320),
-            "max_step": 2000,
-        },
-        {
-            "name": "hard_generalization",
-            "max_train_episode": 10**9,
-            "treasure_count": (6, 10),
-            "buff_count": (0, 2),
-            "monster_interval": (120, 320),
-            "monster_speedup": (140, 420),
-            "max_step": 2000,
-        },
+    # Episode curriculum / 课程式训练分布 
+    RESUME_CURRICULUM_STAGE_NAME = "hard_generalization" 
+    RESUME_CURRICULUM_STAGE_NAME = "hard_generalization" 
+    CURRICULUM_STAGES = ( 
+        { 
+            "name": "warmup_stable", 
+            "max_train_episode": 299, 
+            "treasure_count": (9, 10), 
+            "buff_count": (2, 2), 
+            "monster_interval": (500, 700), 
+            "monster_speedup": (700, 900), 
+            "max_step": 2000, 
+        }, 
+        { 
+            "name": "mid_pressure", 
+            "max_train_episode": 899, 
+            "treasure_count": (8, 10), 
+            "buff_count": (1, 2), 
+            "monster_interval": (500, 500),
+            "monster_speedup": (700, 700), 
+            "max_step": 2000, 
+        }, 
+        { 
+            "name": "late_speedup_survival", 
+            "max_train_episode": 1599, 
+             "treasure_count": (8, 10), 
+            "buff_count": (1, 2), 
+            "monster_interval": (300, 500), 
+            "monster_speedup": (500, 700), 
+            "max_step": 2000, 
+        }, 
+        { 
+            "name": "hard_generalization", 
+            "max_train_episode": 10**9, 
+            "treasure_count": (6, 10), 
+            "buff_count": (1, 2), 
+            "monster_interval": (300, 300), 
+            "monster_speedup": (500, 500), 
+            "max_step": 1000, 
+        }, 
     )
