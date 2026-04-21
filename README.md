@@ -18,8 +18,8 @@ FLASH_DANGER_DISTANCE=15 did not constrain the use of flash.
   - One-time positive reward when a treasure first enters the agent's view.
 - **Disabled `TRUNCATED_BONUS`** (changed from `4.0` to `0.0`).
 - **Preserved all existing shaping rewards** (flash escape, cooldown escape, safe flash penalty, buff rewards, etc.).
-- **Kept curriculum learning** with `max_step` extended to `2000` in most stages.
-
+- **Curriculum learning is not important; just train with the weekly competition configuration.
+  
 - **In `preprocessor.py`**:
   - Added `position_history` buffer (stores last `STALL_WINDOW + 1` positions).
   - Added `first_seen_rewarded` and `last_seen_step` to `TargetMemory` for per-episode treasure tracking.
