@@ -1535,6 +1535,8 @@ class Preprocessor:
 
         flash_escape_reward = 0.0
         flash_used = last_action >= 8
+        gained_resource = (treasure_count > self.last_treasure_count) or (buff_count > self.last_buff_count)
+
         if flash_used and self.last_min_monster_distance < Config.FLASH_DANGER_DISTANCE:
             flash_escape_reward = Config.FLASH_ESCAPE_REWARD_COEF * max(
                 self._away_reward(self.last_min_monster_distance, min_monster_distance),
@@ -1546,14 +1548,25 @@ class Preprocessor:
         flash_through_wall_reward = 0.0
         flash_hit_wall_penalty = 0.0
 
+        non_wall_flash_base_penalty = 0.0
         if flash_used:
             escape_gain = min_monster_distance - self.last_min_monster_distance
             gained_resource = (treasure_count > self.last_treasure_count) or (
                 buff_count > self.last_buff_count
             )
 
-            if movement_state["flash_origin_blocked"] or movement_state["hit_wall"]:
+            non_wall_flash_base_penalty = 0.0
+            if not movement_state["flash_through_wall"]:
+                non_wall_flash_base_penalty = -Config.NON_WALL_FLASH_BASE_PENALTY
+                if post_speedup:
+                    non_wall_flash_base_penalty *= Config.POST_SPEEDUP_NON_WALL_FLASH_MULTIPLIER
+
+            if movement_state["flash_origin_blocked"] and not movement_state["flash_through_wall"]:
                 flash_hit_wall_penalty = -Config.FLASH_HIT_WALL_PENALTY
+                if topology_summary is not None and topology_summary["local_dead_end_risk"] >= Config.TRAPPED_DEAD_END_THRESHOLD:
+                    flash_hit_wall_penalty -= 0.5 * Config.FLASH_HIT_WALL_PENALTY
+            elif movement_state["hit_wall"]:
+                flash_hit_wall_penalty = -0.5 * Config.FLASH_HIT_WALL_PENALTY
 
             if self.last_min_monster_distance < Config.FLASH_DANGER_DISTANCE:
                 nearest_monster = min(
@@ -1639,6 +1652,73 @@ class Preprocessor:
             revisit_penalty *= Config.EARLY_LOOT_REVISIT_PENALTY_MULTIPLIER
 
         visible_monster_count = sum(1 for monster in monsters if monster["active"] and monster["visible"])
+        nearest_visible_monster = min(
+            [monster for monster in monsters if monster["active"] and monster["visible"]],
+            key=lambda monster: monster["distance"],
+            default=None,
+        )
+
+        flash_dir = int(last_action) - 8 if flash_used else None
+        monster_dir = (
+            _relative_direction_to_move_action(nearest_visible_monster["direction"])
+            if nearest_visible_monster is not None
+            else None
+        )
+        flash_toward_visible_monster = (
+            flash_used
+            and flash_dir is not None
+            and monster_dir is not None
+            and _circular_action_gap(flash_dir, monster_dir) <= 1
+        )
+
+        open_area = (
+            topology_summary is not None
+            and topology_summary["local_openness"] >= Config.OPEN_AREA_FLASH_TOWARD_MONSTER_OPENNESS
+        )
+
+        trapped = (
+            topology_summary is not None
+            and topology_summary["local_dead_end_risk"] >= Config.TRAPPED_DEAD_END_THRESHOLD
+        )
+
+        early_flash_penalty = 0.0
+        blind_flash_penalty = 0.0
+        flash_toward_monster_penalty = 0.0
+        trapped_flash_escape_bonus = 0.0
+
+        if flash_used:
+            # 开局乱闪
+            if (
+                self.step_no <= Config.EARLY_FLASH_STEP_LIMIT
+                and not movement_state["flash_through_wall"]
+                and not gained_resource
+                and min_monster_distance > Config.FLASH_DANGER_DISTANCE
+            ):
+                early_flash_penalty = -Config.EARLY_FLASH_PENALTY
+
+            # 不知道怪在哪也乱闪
+            if visible_monster_count == 0 and not movement_state["flash_through_wall"] and not gained_resource:
+                blind_flash_penalty = -Config.FLASH_BLIND_PENALTY
+
+            # 开阔地朝怪闪：禁止
+            if open_area and flash_toward_visible_monster and not movement_state["flash_through_wall"]:
+                flash_toward_monster_penalty = -Config.FLASH_TOWARD_MONSTER_PENALTY
+
+            # 死胡同 / 无路可走：大奖励穿墙闪
+            if trapped and movement_state["flash_through_wall"]:
+                if min_monster_distance >= self.last_min_monster_distance - 2.0:
+                    trapped_flash_escape_bonus = Config.TRAPPED_FLASH_ESCAPE_BONUS
+                    if flash_toward_visible_monster:
+                        trapped_flash_escape_bonus += Config.TRAPPED_FLASH_MONSTER_CROSS_BONUS
+
+                # 如果这波穿墙闪本质上是“朝怪那一侧穿过去抢逃生空间”，再额外大奖励
+                if flash_toward_visible_monster:
+                    trapped_flash_escape_bonus += Config.TRAPPED_FLASH_MONSTER_CROSS_BONUS
+
+                # 闪过去之后空间更开阔，再加一点
+                if topology_summary is not None and topology_summary["local_openness"] > self.last_local_openness:
+                    trapped_flash_escape_bonus += 0.5 * Config.POST_FLASH_FRONTIER_BONUS
+
         stagnation_penalty = -Config.STAGNATION_PENALTY_COEF * movement_state["stagnation_ratio"]
         if visible_monster_count == 0:
             stagnation_penalty *= Config.NO_VISION_STAGNATION_MULTIPLIER
@@ -1691,6 +1771,15 @@ class Preprocessor:
             survival_pressure,
         )
 
+        flash_hold_bonus = 0.0
+        if (
+            not flash_used
+            and flash_cooldown <= 1e-6
+            and danger_level < Config.FLASH_HOLD_SAFE_DANGER_THRESHOLD
+        ):
+            flash_hold_bonus = Config.FLASH_HOLD_BONUS
+            if post_speedup:
+                flash_hold_bonus *= Config.FLASH_HOLD_POST_SPEEDUP_SCALE
         cooldown_escape_reward = 0.0
         if flash_cooldown > 0 and not can_wait and not flash_used:
             dist_gain_abs = min_monster_distance - self.last_min_monster_distance
@@ -1703,6 +1792,19 @@ class Preprocessor:
                         cooldown_escape_reward += Config.COOLDOWN_ESCAPE_OPENNESS_COEF * min(openness_gain, 1.0)
 
         wait_flash_penalty = 0.0
+        trapped_wait_flash_penalty = 0.0
+        if (
+            flash_cooldown > 0
+            and trapped
+            and not flash_used
+        ):
+            if movement_state["stagnation_ratio"] > 0.3:
+                trapped_wait_flash_penalty = -Config.TRAPPED_WAIT_FLASH_PENALTY * (
+                    0.5 + 0.5 * movement_state["stagnation_ratio"]
+                )
+            if movement_state["hit_wall"]:
+                trapped_wait_flash_penalty -= Config.TRAPPED_WAIT_FLASH_PENALTY
+
         if flash_cooldown > 0 and not can_wait and not flash_used:
             if movement_state["stagnation_ratio"] > 0.5:
                 wait_flash_penalty = -Config.WAIT_FLASH_PENALTY * movement_state["stagnation_ratio"]
@@ -1751,14 +1853,21 @@ class Preprocessor:
                 safe_flash_penalty = -Config.SAFE_FLASH_PENALTY
 
         flash_suicide_penalty = 0.0
-        if flash_used and self.post_flash_steps == 0:
-            danger_increased = danger_level > self.post_flash_origin_danger + 0.1
-            dist_decreased = min_monster_distance < self.post_flash_origin_min_dist - Config.FLASH_SUICIDE_DISTANCE_MARGIN
-            openness_worsened = (
-                topology_summary
-                and topology_summary["local_openness"] < self.post_flash_origin_openness - 0.15
+        if flash_used:
+            prev_danger_level = self._compute_danger_level(
+                self.last_min_monster_distance,
+                pinch_risk,
+                speedup_state,
             )
-            if danger_increased or dist_decreased or openness_worsened:
+            current_openness = topology_summary["local_openness"] if topology_summary is not None else 0.0
+            prev_openness = self.last_local_openness
+
+            danger_increased = danger_level > prev_danger_level + 0.08
+            dist_decreased = min_monster_distance < self.last_min_monster_distance - Config.FLASH_SUICIDE_DISTANCE_MARGIN
+            openness_worsened = current_openness < prev_openness - 0.12
+
+            # 闪后既没穿墙、也没拿资源、还更危险 → 重罚
+            if (danger_increased or dist_decreased or openness_worsened) and not movement_state["flash_through_wall"] and not gained_resource:
                 flash_suicide_penalty = -Config.FLASH_SUICIDE_PENALTY
 
         post_flash_stall_penalty = 0.0
@@ -1786,6 +1895,23 @@ class Preprocessor:
                     post_flash_explore_bonus = Config.POST_FLASH_EXPLORE_BONUS
                     if topology_summary["local_openness"] - self.post_flash_origin_openness > 0.2:
                         post_flash_explore_bonus += Config.POST_FLASH_FRONTIER_BONUS
+
+        high_pressure_backtrack_bonus = 0.0
+        if (
+            movement_state.get("is_backtrack", False)
+            and danger_level >= Config.HIGH_PRESSURE_BACKTRACK_THRESHOLD
+            and topology_summary is not None
+        ):
+            openness_change = topology_summary["local_openness"] - self.last_local_openness
+            dist_gain = min_monster_distance - self.last_min_monster_distance
+
+            # 高压下先减轻“回头”相关惩罚
+            wall_backtrack_penalty *= Config.HIGH_PRESSURE_BACKTRACK_PENALTY_SCALE
+            post_flash_backtrack_penalty *= Config.HIGH_PRESSURE_BACKTRACK_PENALTY_SCALE
+
+            # 如果回头后空间更开，或者怪距离变远，就给正奖励
+            if openness_change > 0.05 or dist_gain > 0.0:
+                high_pressure_backtrack_bonus = Config.HIGH_PRESSURE_BACKTRACK_BONUS
 
         normal_escape_reward = 0.0
         if not flash_used and (flash_cooldown > 0 or not can_wait):
@@ -1824,13 +1950,20 @@ class Preprocessor:
                     if speedup_state["speedup_reached"] >= 1.0:
                         buff_approach_reward *= Config.BUFF_POST_SPEEDUP_PRIORITY_MULTIPLIER
 
+        buff_pickup_priority_bonus = 0.0
+
         buff_gained = buff_count > self.last_buff_count
         if buff_gained:
             self.last_buff_effect_step = self.step_no
+
+            if danger_level >= Config.BUFF_HIGH_PRESSURE_THRESHOLD:
+                buff_pickup_priority_bonus += Config.BUFF_HIGH_PRESSURE_PICKUP_BONUS
+
+            if flash_cooldown > 0:
+                buff_pickup_priority_bonus += Config.BUFF_FLASH_CD_PICKUP_BONUS
+
             if min_monster_distance > self.last_min_monster_distance + Config.FLASH_WASTE_MIN_ESCAPE_GAIN:
-                buff_pickup_escape_combo_reward = Config.BUFF_ESCAPE_COMBO_REWARD
-            elif danger_level < self.post_flash_origin_danger - 0.1:
-                buff_pickup_escape_combo_reward = Config.BUFF_HIGH_PRESSURE_PICKUP_BONUS
+                buff_pickup_escape_combo_reward += Config.BUFF_ESCAPE_COMBO_REWARD
 
         if self.step_no - self.last_buff_effect_step <= self.buff_effect_window and not buff_gained:
             if min_monster_distance > self.last_min_monster_distance:
@@ -1888,6 +2021,15 @@ class Preprocessor:
             "buff_approach_reward": buff_approach_reward,
             "buff_pickup_escape_combo_reward": buff_pickup_escape_combo_reward,
             "stall_window_distance": stall_window_distance,
+            "early_flash_penalty": early_flash_penalty,
+            "blind_flash_penalty": blind_flash_penalty,
+            "flash_toward_monster_penalty": flash_toward_monster_penalty,
+            "trapped_flash_escape_bonus": trapped_flash_escape_bonus,
+            "trapped_wait_flash_penalty": trapped_wait_flash_penalty,
+            "high_pressure_backtrack_bonus": high_pressure_backtrack_bonus,
+            "buff_pickup_priority_bonus": buff_pickup_priority_bonus,
+            "flash_hold_bonus": flash_hold_bonus,
+            "non_wall_flash_base_penalty": non_wall_flash_base_penalty,
         }
 
         if topology_summary is not None:
