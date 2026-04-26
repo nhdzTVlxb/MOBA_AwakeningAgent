@@ -193,14 +193,14 @@ class Config:
     BUFF_FLASH_PICKUP_BONUS = 0.45
 
     # buff 刚刷新时拿到，给额外鼓励。
-    BUFF_REFRESH_PICKUP_BONUS = 0.25
+    BUFF_REFRESH_PICKUP_BONUS = 0.40
 
     # 高压/后期拿 buff 的额外价值，但封顶，避免超过宝箱太多。
-    BUFF_HIGH_PRESSURE_PICKUP_BONUS = 0.35
-    BUFF_PICKUP_BONUS_CAP = 0.75
+    BUFF_HIGH_PRESSURE_PICKUP_BONUS = 0.45
+    BUFF_PICKUP_BONUS_CAP = 2.0
 
     # 拿到 buff 后确实拉开怪物距离，给小额连招奖励。
-    BUFF_ESCAPE_COMBO_REWARD = 0.25
+    BUFF_ESCAPE_COMBO_REWARD = 0.35
 
     # 如果这次闪现确实拿到了 buff，就不要再按普通非穿墙闪现惩罚。
     BUFF_RESOURCE_FLASH_PENALTY_SCALE = 0.0
