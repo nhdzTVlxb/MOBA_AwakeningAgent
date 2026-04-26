@@ -197,7 +197,7 @@ class Config:
 
     # 高压/后期拿 buff 的额外价值，但封顶，避免超过宝箱太多。
     BUFF_HIGH_PRESSURE_PICKUP_BONUS = 0.45
-    BUFF_PICKUP_BONUS_CAP = 2.0
+    BUFF_PICKUP_BONUS_CAP = 1.0
 
     # 拿到 buff 后确实拉开怪物距离，给小额连招奖励。
     BUFF_ESCAPE_COMBO_REWARD = 0.35
