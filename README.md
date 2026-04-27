@@ -3,15 +3,12 @@
 # Gorge Chase PPO - DMSD
 
 ## Core Idea
+## Lightweight Design
 
-A reinforcement learning agent based on **Dual-domain Memory and Situational Decision (DMSD)** , operating in a complex maze environment with:
-
-- **Treasure collection** - balancing greed and survival
-- **Monster chasing** - difficulty progression from single monster to double monsters with speedup
-- **Flash resource management** - 2000-step cooldown, wall-through capability, requires careful usage
-- **Buff resource management** - 200-step refresh, requires judgment on whether to wait or flash for pickup
-
-Core philosophy: **The same action should receive completely different rewards depending on the situation.**
+Due to device constraints, the model adopts a lightweight design:
+- **Total observation dimension**: 1053
+- **Model size**: ~0.6 MB
+- **Design philosophy**: Small CNN encoder, low-dimensional MLPs, no RNN (temporal memory delegated to preprocessor)
 
 ---
 
