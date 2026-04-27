@@ -2,7 +2,6 @@
 
 # Gorge Chase PPO - DMSD
 
-## Core Idea
 ## Lightweight Design
 
 Due to device constraints, the model adopts a lightweight design:
