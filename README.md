@@ -1,4 +1,4 @@
-# 2026 Tencent Kaiwu - Agent Decision Algorithm - Preliminary Round
+# 2026 Tencent RL - Agent Decision Algorithm - Preliminary Round
 
 # PPO5.0
 
