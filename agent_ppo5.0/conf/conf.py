@@ -21,7 +21,7 @@ class Config:
         10,
         10,
         10,
-        2312,  # map: 8 * 17 * 17
+        968,  # map: 8 * 11 * 11
         16,
         24,
     ]
@@ -106,7 +106,7 @@ class Config:
     FLASH_DIRECTION_MAX_DISTANCE_DROP = 12.0
     FLASH_THROUGH_WALL_REWARD_COEF = 0.01
     FLASH_THROUGH_WALL_MIN_MOVE_DISTANCE = 4.0
-    FLASH_THROUGH_WALL_SCAN_STEPS = 8
+    FLASH_THROUGH_WALL_SCAN_STEPS = 4
     FLASH_THROUGH_WALL_MAX_DISTANCE_DROP = 6.0
     FLASH_WASTE_PENALTY = 0.18
     FLASH_WASTE_MIN_ESCAPE_GAIN = 8.0
@@ -275,7 +275,7 @@ class Config:
     EXPLORE_BONUS_MIN_RATIO = 0.25
 
     # Semantic map / 局部语义地图
-    LOCAL_MAP_SIZE = 17
+    LOCAL_MAP_SIZE = 11
     LOCAL_MAP_CHANNEL = 8
 
     # Structured observation encoder / 结构化观测编码
