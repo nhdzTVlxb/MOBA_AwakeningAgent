@@ -263,9 +263,9 @@ map_feat (batch × 8 × 11 × 11)
 
 | Stage | Episodes | Monster Interval | Speedup Step | Difficulty |
 |-------|----------|------------------|--------------|------------|
-| warmup_stable | 0-499 | step 800 | 1000 | Easy: single monster, slow |
+| warmup_stable | 0-499 | step 800 | 1000 | Easy: slow |
 | mid_pressure | 500-1299 | step 500 | 700 | Medium: double monster pressure |
-| late_speedup_survival | 1300-1499 | step 300 | 500 | Hard: double monster, early speedup |
+| late_speedup_survival | 1300-1499 | step 300 | 500 | Hard:  early speedup |
 | hard_generalization | 1500+ | step 300 | 500 | Extreme: sustained high pressure |
 
 ### Stage Transition Logic
