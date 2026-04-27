@@ -1,4 +1,4 @@
-# MOBA_AwakeningAgent
+# 2026 Tencent Kaiwu - Agent Decision Algorithm - Preliminary Round
 
 # PPO5.0
 
