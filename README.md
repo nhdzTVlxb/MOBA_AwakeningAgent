@@ -73,13 +73,13 @@ Observation = [
     + monster1 (10)              # position, distance, direction, threat
     + monster2 (10)              # same as monster1
     + treasure (10)              # target treasure guidance
-    + semantic_map (2312)        # 8×17×17: walkable, heat, treasure, buff, risk, topology
+    + semantic_map (968)        # 8×11×11: walkable, heat, treasure, buff, risk, topology
     + legal_action (16)          # valid action mask
     + progress (24)              # survival pressure, greed window, etc.
 ]
 ```
 
-### 5. Semantic Map (8 channels, 17×17)
+### 5. Semantic Map (8 channels, 11×11)
 | Channel | Content |
 |---------|---------|
 | 0 | Walkable area |
