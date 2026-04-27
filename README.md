@@ -1,6 +1,6 @@
 # MOBA_AwakeningAgent
 
-# Gorge Chase PPO - DMSD
+# PPO5.0
 
 ## Lightweight Design
 
