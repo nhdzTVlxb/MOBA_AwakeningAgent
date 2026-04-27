@@ -229,12 +229,12 @@ map_feat (batch × 8 × 11 × 11)
 
 ## Dual-Domain Memory System
 
-### 8.1 Treasure Memory
+### 1 Treasure Memory
 - **Position memory**: Position remembered once seen
 - **Availability tracking**: Based on remaining treasures from environment
 - **First-seen flag**: Controls first discovery reward
 
-### 8.2 Buff Memory
+### 2 Buff Memory
 - **Position memory**: Position remembered once seen
 - **Refresh estimation**: Buff cooldown ~200 steps
   ```
@@ -245,15 +245,15 @@ map_feat (batch × 8 × 11 × 11)
   - `step >= estimated_ready_step` → available again + `just_refreshed=True`
 - **Wait strategy**: Only allow waiting ≤ 18 steps, and monster must not catch up first
 
-### 8.3 Visit Heat
+### 3 Visit Heat
 - Global 128×128 grid tracking visit counts
 - Used for `revisit_intensity` and semantic map heat channel
 
-### 8.4 10-step Position History
+### 4 10-step Position History
 - Records last `STALL_WINDOW+1` positions (default 11)
 - Used for `stall_window_penalty`: penalty if movement < 5 over 10 steps
 
-### 8.5 Post-Flash Window Tracking
+### 5 Post-Flash Window Tracking
 - Records after flash: `post_flash_origin_pos`, `post_flash_origin_danger`, `post_flash_origin_min_dist`, `post_flash_origin_openness`
 - 8-step window to detect behavior quality, with additional rewards/penalties
 
