@@ -1,166 +1,148 @@
 # MOBA_AwakeningAgent
 
-## Changelog
+# Gorge Chase PPO - DMSD (Dual-domain Memory and Situational Decision)
 
-### 
-### 2026-04-22 PPO4.2 Update（running）
+## Core Idea
 
-## I. Observation Dimension Changes
-
-| Module     | Dimension |
-|------------|-----------|
-| hero       | 15        |
-| monster1   | 10        |
-| monster2   | 10        |
-| treasure   | 10        |
-| map        | 847       |
-| legal      | 16        |
-| progress   | 24        |
-| **Total**  | 932       |
-
-### New Hero Features (3-dim)
-- `history_dx_norm`: x-offset from 10 steps ago
-- `history_dz_norm`: z-offset from 10 steps ago
-- `history_dist_norm`: distance from 10 steps ago
+A reinforcement learning agent for treasure collection with monster evasion, featuring **structured observation encoding** and **behavioral reward shaping**.
 
 ---
 
-## II. Core Parameter Changes
+## Key Innovations
 
-### Anti-Stalling (10-step lookback)
-- `STALL_WINDOW = 10`
-- `STALL_DISTANCE_THRESHOLD = 5.0`
-- `STALL_PENALTY = 0.10`
-- `HISTORY_POSITION_NORM = 32.0`
+### 1. Dual-Domain Memory System
+| Domain | Content |
+|--------|---------|
+| **Local Immediate** | Walkability, visit heat, treasure/buff positions, monster risk, openness, corridor, dead-end |
+| **Semi-global Memory** | Visit heatmap, treasure/buff positions with refresh estimation, position history |
 
-### First-Time Treasure Sight Reward
-- `FIRST_SEEN_TREASURE_REWARD = 0.20`
+### 2. Situational Awareness Signals
+- `danger_level` - distance + pinch risk + speedup state
+- `pinch_risk` - angle between two approaching monsters
+- `survival_pressure` - combined pressure from threats
+- `greed_window` - safe opportunity to hunt treasure
 
-### Learning Rate
-- `INIT_LEARNING_RATE_START = 0.0001` (1e-4)
+### 3. Reward Shaping Components
 
----
+#### Survival & Movement
+| Reward | Purpose |
+|--------|---------|
+| `SURVIVE_REWARD` | Small per-step survival bonus |
+| `DIST_SHAPING` | Moving away from monsters |
+| `STALL_PENALTY` | 10-step ≥5 distance check (anti-grinding) |
 
-## III. Flash Strategy Changes
+#### Treasure Collection
+| Reward | Purpose |
+|--------|---------|
+| `TREASURE_REWARD = 2.5` | Per treasure collected |
+| `FIRST_SEEN_TREASURE_REWARD` | First discovery bonus |
+| `TREASURE_DIST_COEF` | Moving toward nearest treasure |
+| `TREASURE_MISS_PENALTY` | Abandoning close treasure |
 
-### Weakened Normal Flash Rewards (limit abuse)
-- `FLASH_ESCAPE_REWARD_COEF = 0.005`
-- `FLASH_DIRECTION_REWARD_COEF = 0.004`
+#### Flash (Teleport) Usage
+| Reward | Purpose |
+|--------|---------|
+| `FLASH_ESCAPE_REWARD` | Escaping danger via flash |
+| `FLASH_THROUGH_WALL_REWARD` | Legitimate wall-through flash |
+| `FLASH_WASTE_PENALTY` | Useless flash with no gain |
+| `FLASH_HIT_WALL_PENALTY` | Attempting flash into wall |
+| `FLASH_SUICIDE_PENALTY` | Flash making situation worse |
 
-### Post-Flash Exploration Rewards (replace direct flash gains)
-- `POST_FLASH_EXPLORE_BONUS = 0.01`: rewarded when flashing into unexplored area
-- `POST_FLASH_FRONTIER_BONUS = 0.01`: rewarded when flashing closer to frontier
+#### Buff System (200-step refresh)
+| Reward | Purpose |
+|--------|---------|
+| `BUFF_REWARD = 2.0` | Per buff collected |
+| `BUFF_APPROACH_REWARD` | Moving toward available buff |
+| `BUFF_FLASH_PICKUP_BONUS` | Using flash to grab buff |
+| `BUFF_WAIT_PENALTY` | Waiting too long for refresh |
+| `BUFF_REFRESH_PICKUP_BONUS` | Grabbing freshly spawned buff |
 
-> 🎯 Purpose: Shift flash reward from "using flash" to "actually exploring new areas after flash", discouraging meaningless flashes.
+#### Behavior Constraints
+| Penalty | Trigger |
+|---------|---------|
+| `HIT_WALL_PENALTY` | Attempting move into wall |
+| `STAGNATION_PENALTY` | Repeated small/no movement |
+| `OSCILLATION_PENALTY` | Back-and-forth movement |
+| `REVISIT_PENALTY` | Revisiting same area |
 
-### Flash Danger Threshold
-- `FLASH_DANGER_DISTANCE = 10.0`
+### 4. Structured Observation (1053 dims)
 
-### Non-Wall Flash Penalty
-- `NON_WALL_FLASH_BASE_PENALTY = 0.12`
-- `POST_SPEEDUP_NON_WALL_FLASH_MULTIPLIER = 1.4`
+```
+Observation = [
+    hero (15)                    # position, flash/buff status, progress
+    + monster1 (10)              # position, distance, direction, threat
+    + monster2 (10)              # same as monster1
+    + treasure (10)              # target treasure guidance
+    + semantic_map (2312)        # 8×17×17: walkable, heat, treasure, buff, risk, topology
+    + legal_action (16)          # valid action mask
+    + progress (24)              # survival pressure, greed window, etc.
+]
+```
 
-### Flash Hold Bonus (save flash)
-- `FLASH_HOLD_BONUS = 0.04`
-- `FLASH_HOLD_SAFE_DANGER_THRESHOLD = 0.40`
-- `FLASH_HOLD_POST_SPEEDUP_SCALE = 0.5`
+### 5. Semantic Map (8 channels, 17×17)
+| Channel | Content |
+|---------|---------|
+| 0 | Walkable area |
+| 1 | Visit heat |
+| 2 | Treasure positions (positive) |
+| 3 | Buff positions (positive) |
+| 4 | Monster risk |
+| 5 | Openness |
+| 6 | Corridor |
+| 7 | Dead-end risk |
 
-### Wall Hit / Wall Pass
-- `FLASH_HIT_WALL_PENALTY = 0.35`
-- `FLASH_THROUGH_WALL_BONUS_MULTIPLIER = 2.20`
-- `FLASH_THROUGH_WALL_REWARD_COEF = 0.01`
+### 6. Curriculum Training Stages
 
-### Safe Flash / Suicide Flash Penalty
-- `SAFE_FLASH_PENALTY = 0.35`
-- `SAFE_FLASH_DANGER_THRESHOLD = 0.18`
-- `FLASH_SUICIDE_DISTANCE_MARGIN = 4.0`
-- `FLASH_SUICIDE_PENALTY = 0.60`
-
-### Early / Blind / Toward-Monster Flash Penalty
-- `EARLY_FLASH_STEP_LIMIT = 20`
-- `EARLY_FLASH_PENALTY = 0.35`
-- `FLASH_BLIND_PENALTY = 0.40`
-- `OPEN_AREA_FLASH_TOWARD_MONSTER_OPENNESS = 0.60`
-- `FLASH_TOWARD_MONSTER_PENALTY = 0.35`
-
-### Trapped Dead-End Flash Bonus
-- `TRAPPED_DEAD_END_THRESHOLD = 0.65`
-- `TRAPPED_FLASH_ESCAPE_BONUS = 0.45`
-- `TRAPPED_FLASH_MONSTER_CROSS_BONUS = 0.55`
-- `TRAPPED_WAIT_FLASH_PENALTY = 0.18`
-
-### High-Pressure Backtrack Exemption / Bonus
-- `HIGH_PRESSURE_BACKTRACK_THRESHOLD = 0.70`
-- `HIGH_PRESSURE_BACKTRACK_PENALTY_SCALE = 0.25`
-- `HIGH_PRESSURE_BACKTRACK_BONUS = 0.12`
-
----
-
-## IV. Buff Strategy Enhancements
-
-- `BUFF_REWARD = 1.30`
-- `BUFF_APPROACH_REWARD = 0.10`
-- `BUFF_HIGH_PRESSURE_PICKUP_BONUS = 0.50`
-- `BUFF_ESCAPE_COMBO_REWARD = 0.30`
-- `BUFF_FLASH_CD_PICKUP_BONUS = 0.25`
-- `BUFF_HIGH_PRESSURE_THRESHOLD = 0.45`
-- `BUFF_POST_SPEEDUP_PRIORITY_MULTIPLIER = 1.4`
-
----
-
-## V. New Preprocessor Features
-
-- Position history buffer (supports 10-step lookback)
-- First-time treasure sight memory (prevents repeated rewards)
-- Treasure / Buff memory cache (supports returning to known targets)
-
----
-
-## VI. Reward Terms Added to Total Reward
-
-- `stall_window_penalty`
-- `first_seen_treasure_reward`
-- `early_flash_penalty`
-- `blind_flash_penalty`
-- `flash_toward_monster_penalty`
-- `trapped_flash_escape_bonus`
-- `trapped_wait_flash_penalty`
-- `high_pressure_backtrack_bonus`
-- `buff_pickup_priority_bonus`
-- `flash_hold_bonus`
-- `non_wall_flash_base_penalty`
-- `post_flash_explore_bonus`
-- `post_flash_frontier_bonus`
+| Stage | Episodes | Monster Interval | Speedup Step | Difficulty |
+|-------|----------|------------------|--------------|------------|
+| warmup_stable | 0-499 | 800 | 1000 | Easy |
+| mid_pressure | 500-1299 | 500 | 700 | Medium |
+| late_speedup_survival | 1300-1499 | 300 | 500 | Hard |
+| hard_generalization | 1500+ | 300 | 500 | Extreme |
 
 ---
 
-## VII. Behavioral Goals Summary
+## Key Hyperparameters
 
-| ✅ Rewarded Behaviors | ❌ Penalized Behaviors |
-|----------------------|------------------------|
-| No stalling / corner grinding | Almost no movement over 10 steps |
-| First-time treasure discovery | Flash hitting a wall |
-| Picking up / approaching treasure | Flashing when safe |
-| Approaching or picking up buff | Flashing without seeing any monster |
-| Picking up buff under high pressure | Flashing toward monster in open area |
-| Successful wall-pass flash | Becoming more dangerous after flash |
-| Escaping dead-end with flash | Wasting time in dead-end while waiting for CD |
-| Successful backtracking under high pressure | Using non-wall flash carelessly |
-| Holding flash when safe (not using it) | Backtracking with no benefit under low pressure |
-| **Actually exploring new area / frontier after flash** | Wall-hugging / oscillating / repeated revisiting |
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `GAMMA` | 0.995 | Discount factor |
+| `LAMDA` | 0.95 | GAE lambda |
+| `LR` | 0.0001 | Learning rate |
+| `CLIP_PARAM` | 0.15 | PPO clip range |
+| `ACTION_NUM` | 16 | 8 move + 8 flash |
+| `LOCAL_MAP_SIZE` | 17 | Local perception range |
 
 ---
 
-## VIII. Flash Abuse Limitation Mechanisms
+## Architecture
 
-| Mechanism | Effect |
-|-----------|--------|
-| Lower `FLASH_ESCAPE_REWARD_COEF` | Flash no longer gives high escape reward directly |
-| Lower `FLASH_DIRECTION_REWARD_COEF` | Flash no longer rewarded just for correct direction |
-| `NON_WALL_FLASH_BASE_PENALTY` | Base penalty for non-wall flash |
-| `SAFE_FLASH_PENALTY` | Direct penalty for flashing when safe |
-| `FLASH_BLIND_PENALTY` | Penalty for flashing without seeing any monster |
-| `POST_FLASH_EXPLORE_BONUS` | Reward only if flash leads to new area exploration |
-| `POST_FLASH_FRONTIER_BONUS` | Reward only if flash gets closer to frontier |
+```
+Input (1053)
+    ↓
+[Split by semantic]
+    ↓
+Hero(15) → MLP(32)
+Monster(20) → MLP(64)  
+Treasure(10) → MLP(16)
+Map(2312) → CNN(128)
+Control(40) → MLP(32)
+    ↓
+Concat (272) → MLP(128) → MLP(128)
+    ↓
+┌─────────────┴─────────────┐
+↓                           ↓
+Actor (16 actions)        Critic (1 value)
+```
+
+---
+
+## Design Philosophy
+
+1. **Don't punish what you want to learn** - Positive shaping for desired behaviors
+2. **Situational context matters** - Same action yields different rewards based on danger/pressure
+3. **Memory reduces partial observability** - Remember treasure/buff locations after they leave view
+4. **Conservative flash usage** - Flash only when it provides meaningful escape/resource gain
+5. **Anti-grinding mechanisms** - Stagnation/oscillation/revisit penalties prevent exploitative loops
 
 
