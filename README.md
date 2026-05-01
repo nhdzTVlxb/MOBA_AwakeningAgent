@@ -61,7 +61,7 @@ Step 6: Terminal Check
 
 ---
 
-## Observation Features (652 dims)
+## Observation Features 
 
 ```
 Observation = [
