@@ -1,6 +1,6 @@
 # 2026 Tencent RL - Agent Decision Algorithm - Preliminary Round
 
-# PPO5.0
+# PPO5.0 | Eastern Regional Preliminary Second Prize | Advanced to Eastern Final
 
 ## Lightweight Design
 
